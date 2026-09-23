@@ -87,7 +87,7 @@ Issue the `tenant_id` claim wherever you sign users in — see [`Program.cs`](Pr
 
 ## Related
 
-- Global data filters docs: https://dotnetreport.com/kb/docs/advance-topics/global-filters/
+- Global data filters docs: https://dotnetreport.com/docs/#global-filters
 - Users, roles & security docs: https://dotnetreport.com/docs
 
 ---
