@@ -1,8 +1,56 @@
-﻿@{
-    ViewData["Title"] = "Home Page";
+@using MultiTenantDemo.Security
+@model HomePageModel
+@{
+    ViewData["Title"] = "My Access";
+    var me = Model.Me;
+    string ScopeText(string scope) => scope switch
+    {
+        "AllTenants" => "every row in every tenant",
+        "AssignedTenants" => "every row in the tenants assigned to you",
+        "Team" => "rows owned by you and everyone who reports to you",
+        _ => "only rows you own"
+    };
 }
+<div class="demo-page">
+    <h1>Hi @me.User.FullName.Split(' ')[0]</h1>
+    <p class="lede">
+        This is what Dotnet Report knows about you on every request. <code>GetSettings()</code> reads it from your sign-in claims,
+        and the engine adds the filters below to every query: reports, dashboards, drill-downs, exports and scheduled emails.
+    </p>
 
-<div class="text-center">
-    <h1 class="display-4">Welcome</h1>
-    <p>Learn about <a href="https://learn.microsoft.com/aspnet/core">building Web apps with ASP.NET Core</a>.</p>
+    <div class="demo-grid">
+        <div class="demo-card">
+            <h2 class="mt-0">Who you are</h2>
+            <dl class="demo-kv">
+                <dt>User</dt><dd>@me.User.FullName <span class="user-sub">@me.User.Email</span></dd>
+                <dt>Title</dt><dd>@me.User.Title</dd>
+                <dt>Roles</dt><dd>@foreach (var r in me.User.Roles) { <span class="pill pill-role">@r.Name</span> }</dd>
+                <dt>Data scope</dt><dd><span class="pill pill-scope-@me.DataScope">@me.DataScope</span> @ScopeText(me.DataScope)</dd>
+                <dt>Tenants</dt><dd>@foreach (var t in me.AllowedTenants) { <span class="pill pill-tenant">@t.Code</span> }</dd>
+                <dt>Active tenant</dt><dd>@(me.ActiveTenant == DemoClaims.AllTenants ? "All my tenants" : me.AllowedTenants.First(t => t.TenantId.ToString() == me.ActiveTenant).Name)</dd>
+                @if (me.SalesRepIds != null)
+                {
+                    <dt>Team</dt><dd>@(me.SalesRepIds.Count == 1 ? "Just you" : $"You + {me.SalesRepIds.Count - 1} people below you")</dd>
+                }
+                <dt>Admin mode</dt><dd>@(me.CanUseAdminMode ? "Yes, can manage every report in the tenant" : "No")</dd>
+            </dl>
+        </div>
+
+        <div class="demo-card">
+            <h2 class="mt-0">What Dotnet Report receives</h2>
+            <pre class="demo-code"><span class="k">settings.ClientId</span>        = "@Model.ClientId"   @(string.IsNullOrEmpty(Model.ClientId) ? "// shared workspace" : "// reports saved here stay in this tenant")
+<span class="k">settings.UserId</span>          = "@me.User.Email"
+<span class="k">settings.CurrentUserRole</span> = [@string.Join(", ", me.User.Roles.Select(r => $"\"{r.Name}\""))]
+<span class="k">settings.CanUseAdminMode</span> = @me.CanUseAdminMode.ToString().ToLowerInvariant()
+<span class="k">settings.DataFilters</span>     = @System.Text.Json.JsonSerializer.Serialize(Model.DataFilters)</pre>
+            <div class="demo-stat-label mt-3 mb-1">Appended to every generated query</div>
+            <pre class="demo-code">@ReportFilters.ToSqlPreview(Model.DataFilters)</pre>
+        </div>
+    </div>
+
+    <div class="d-flex gap-2 mt-4">
+        <a class="btn btn-primary" href="/DotnetReport"><i class="fa fa-bar-chart"></i> Open Reports</a>
+        <a class="btn btn-outline-secondary" href="/DotnetReport/Dashboard"><i class="fa fa-dashboard"></i> Dashboards</a>
+        <a class="btn btn-outline-secondary" href="/Users"><i class="fa fa-users"></i> Users &amp; Access</a>
+    </div>
 </div>

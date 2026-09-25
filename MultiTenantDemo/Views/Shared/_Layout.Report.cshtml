@@ -10,28 +10,13 @@
     <meta name="description" content="Ad hoc Reporting software that allows programmers to easily add Reporting functionality to their ASP .NET Web Software Solution" />
 
     @await Html.PartialAsync("_DotnetReportHeaderPartial")
+    <link href="~/css/demo.css" rel="stylesheet" asp-append-version="true" />
     @RenderSection("head", required: false)
 </head>
 
 <body>
-    <nav class="navbar navbar-expand-md navbar-dark bg-dark">
-        <a class="navbar-brand" href="/">
-            <img src="~/img/report-logo.png" alt=".Net Report Builder" style="width: 140px;" />
-        </a>
-        <div class="collapse navbar-collapse justify-content-end" id="navbarNavDropdown">
-            <ul class="navbar-nav ml-auto">
-                <li class="nav-item">
-                    <a class="nav-link" href="/DotnetReport/Dashboard"><i class="fa fa-dashboard"></i> Dashboards</a>
-                </li>
-                <li class="nav-item">
-                    <a class="nav-link" href="/DotnetReport"><i class="fa fa-bar-chart"></i> Reports</a>
-                </li>
-                <li class="nav-item">
-                    <a class="nav-link" href="/DotnetSetup"><i class="fa fa-gear"></i> Setup</a>
-                </li>
-            </ul>
-        </div>
-    </nav>
+    @* Multi-tenant demo: shared navbar with tenant switcher and impersonation banner *@
+    <partial name="_DemoNav" />
     @Html.AntiForgeryToken()
     <div class="body-content container-fluid" style="padding-bottom: 60px;">
         @RenderBody()

@@ -1,0 +1,71 @@
+@using System.Security.Claims
+@using MultiTenantDemo.Security
+@inject DemoDirectoryProvider DirectoryProvider
+@{
+    var signedIn = User.Identity?.IsAuthenticated == true;
+    var directory = signedIn ? await DirectoryProvider.GetAsync() : null;
+    var profile = directory != null ? User.DemoProfile(directory) : null;
+    var impersonator = User.FindFirst(DemoClaims.ImpersonatorName)?.Value;
+    var path = Context.Request.Path.Value?.ToLowerInvariant() ?? "/";
+    var returnUrl = Context.Request.Path + Context.Request.QueryString;
+    string Active(string prefix) => (prefix == "/" ? path == "/" || path.StartsWith("/home") : path.StartsWith(prefix)) ? "active" : "";
+}
+<nav class="demo-nav">
+    <a class="demo-brand" href="/">
+        <img src="~/img/report-logo.png" alt="Dotnet Report" />
+        <span>Multi-Tenant Demo</span>
+    </a>
+    @if (profile != null)
+    {
+        <div class="demo-links">
+            <a class="@Active("/")" href="/"><i class="fa fa-id-card-o"></i> My Access</a>
+            <a class="@Active("/dotnetreport/dashboard")" href="/DotnetReport/Dashboard"><i class="fa fa-dashboard"></i> Dashboards</a>
+            <a class="@(path.StartsWith("/dotnetreport") && !path.StartsWith("/dotnetreport/dashboard") ? "active" : "")" href="/DotnetReport"><i class="fa fa-bar-chart"></i> Reports</a>
+            <a class="@Active("/users")" href="/Users"><i class="fa fa-users"></i> Users &amp; Access</a>
+            @if (profile.CanAccessSetup)
+            {
+                <a class="@Active("/dotnetsetup")" href="/DotnetSetup"><i class="fa fa-gear"></i> Setup</a>
+            }
+        </div>
+        <div class="demo-identity">
+            @if (profile.AllowedTenants.Count > 1)
+            {
+                <form method="post" action="/Account/SwitchTenant" class="demo-tenant-switch">
+                    @Html.AntiForgeryToken()
+                    <input type="hidden" name="returnUrl" value="@returnUrl" />
+                    <label for="demo-tenant"><i class="fa fa-building-o"></i></label>
+                    <select id="demo-tenant" name="tenant" onchange="this.form.submit()" title="Active tenant">
+                        <option value="*" selected="@(profile.ActiveTenant == DemoClaims.AllTenants)">All my tenants (@profile.AllowedTenants.Count)</option>
+                        @foreach (var t in profile.AllowedTenants)
+                        {
+                            <option value="@t.TenantId" selected="@(profile.ActiveTenant == t.TenantId.ToString())">@t.Name</option>
+                        }
+                    </select>
+                </form>
+            }
+            else if (profile.AllowedTenants.Count == 1)
+            {
+                <span class="demo-tenant-fixed"><i class="fa fa-building-o"></i> @profile.AllowedTenants[0].Name</span>
+            }
+            <span class="demo-user">
+                <strong>@profile.User.FullName</strong>
+                <small>@string.Join(", ", profile.User.Roles.Select(r => r.Name))</small>
+            </span>
+            <form method="post" action="/Account/Logout">
+                @Html.AntiForgeryToken()
+                <button type="submit" class="demo-signout" title="Sign out"><i class="fa fa-sign-out"></i></button>
+            </form>
+        </div>
+    }
+</nav>
+@if (impersonator != null && profile != null)
+{
+    <div class="demo-impersonation">
+        <i class="fa fa-user-secret"></i>
+        <span><strong>@impersonator</strong> is impersonating <strong>@profile.User.FullName</strong>. Every report now runs with @profile.User.FullName's tenants and data filters.</span>
+        <form method="post" action="/Account/StopImpersonating">
+            @Html.AntiForgeryToken()
+            <button type="submit">Return to @impersonator</button>
+        </form>
+    </div>
+}

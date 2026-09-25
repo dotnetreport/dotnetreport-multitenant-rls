@@ -6,6 +6,10 @@ Built on [Dotnet Report](https://dotnetreport.com), an embedded report builder f
 
 > The Dotnet Report report-builder front-end is source-available on GitHub: https://github.com/dotnetreport/dotnetreport
 
+> **Runnable demo:** [`MultiTenantDemo/`](MultiTenantDemo/README.md) is a complete app with a SQL script for tenants,
+> users, roles, a reporting hierarchy and sales data, a login page, a Users & Access page with impersonation,
+> and `GetSettings()` building DataFilters from the signed-in user.
+
 ## The problem
 
 Self-service reporting and multi-tenancy pull against each other. Once users can pick any table and any column, "just add `WHERE TenantId = @tenant` to the query" stops being something a developer controls — the user is writing the query. You need the isolation to be applied **by the engine**, on every query, from context the user cannot change.

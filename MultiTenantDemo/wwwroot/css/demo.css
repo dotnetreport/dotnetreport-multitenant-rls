@@ -1,0 +1,107 @@
+/* Multi-tenant demo chrome: navbar, impersonation banner, access pages */
+:root {
+    --demo-ink: #1f2937;
+    --demo-muted: #6b7280;
+    --demo-line: #e5e7eb;
+    --demo-soft: #f8fafc;
+    --demo-nav: #111827;
+    --demo-accent: #2563eb;
+    --demo-warn-bg: #fff7ed;
+    --demo-warn-line: #fdba74;
+    --demo-warn-ink: #9a3412;
+}
+
+body.demo { background: var(--demo-soft); color: var(--demo-ink); margin-bottom: 0; }
+
+/* ---------- navbar ---------- */
+.demo-nav {
+    display: flex; align-items: center; gap: 24px; flex-wrap: wrap;
+    background: var(--demo-nav); color: #fff; padding: 8px 20px; min-height: 56px;
+}
+.demo-brand { display: flex; align-items: center; gap: 10px; color: #fff; text-decoration: none; }
+.demo-brand:hover { color: #fff; }
+.demo-brand img { width: 120px; }
+.demo-brand span { font-weight: 600; font-size: 0.95rem; padding-left: 10px; border-left: 1px solid #374151; color: #d1d5db; }
+.demo-links { display: flex; gap: 4px; flex-wrap: wrap; flex: 1; }
+.demo-links a { color: #d1d5db; text-decoration: none; padding: 6px 12px; border-radius: 6px; font-size: 0.92rem; }
+.demo-links a:hover { color: #fff; background: #1f2937; }
+.demo-links a.active { color: #fff; background: #374151; }
+.demo-identity { display: flex; align-items: center; gap: 14px; }
+.demo-tenant-switch { display: flex; align-items: center; gap: 6px; margin: 0; }
+.demo-tenant-switch label { color: #9ca3af; margin: 0; }
+.demo-tenant-switch select {
+    background: #1f2937; color: #fff; border: 1px solid #4b5563; border-radius: 6px; padding: 4px 8px; font-size: 0.88rem;
+}
+.demo-tenant-fixed { color: #d1d5db; font-size: 0.88rem; }
+.demo-user { display: flex; flex-direction: column; line-height: 1.15; text-align: right; }
+.demo-user strong { font-size: 0.9rem; }
+.demo-user small { color: #9ca3af; font-size: 0.75rem; }
+.demo-identity form { margin: 0; }
+.demo-signout { background: none; border: 1px solid #4b5563; color: #d1d5db; border-radius: 6px; padding: 4px 9px; }
+.demo-signout:hover { color: #fff; border-color: #9ca3af; }
+
+.demo-impersonation {
+    display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+    background: var(--demo-warn-bg); color: var(--demo-warn-ink); border-bottom: 1px solid var(--demo-warn-line);
+    padding: 8px 20px; font-size: 0.9rem;
+}
+.demo-impersonation form { margin: 0 0 0 auto; }
+.demo-impersonation button {
+    background: var(--demo-warn-ink); color: #fff; border: 0; border-radius: 6px; padding: 4px 12px; font-size: 0.85rem;
+}
+
+/* ---------- pages ---------- */
+.demo-page { max-width: 1320px; margin: 0 auto; padding: 24px 20px 48px; }
+.demo-page h1 { font-size: 1.6rem; font-weight: 600; margin-bottom: 4px; }
+.demo-page .lede { color: var(--demo-muted); margin-bottom: 24px; max-width: 70ch; }
+.demo-page h2 { font-size: 1.1rem; font-weight: 600; margin: 32px 0 12px; }
+.demo-card { background: #fff; border: 1px solid var(--demo-line); border-radius: 10px; padding: 18px 20px; }
+.demo-grid { display: grid; gap: 16px; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); }
+.demo-kv { display: grid; grid-template-columns: 130px 1fr; gap: 6px 12px; font-size: 0.92rem; margin: 0; }
+.demo-kv dt { color: var(--demo-muted); font-weight: 400; }
+.demo-kv dd { margin: 0; }
+.demo-code {
+    background: #0f172a; color: #e2e8f0; border-radius: 8px; padding: 12px 14px; font-size: 0.82rem;
+    white-space: pre-wrap; word-break: break-word; margin: 0;
+}
+.demo-code .k { color: #93c5fd; }
+.demo-stat { font-size: 1.7rem; font-weight: 600; font-variant-numeric: tabular-nums; }
+.demo-stat-label { color: var(--demo-muted); font-size: 0.85rem; }
+.num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+
+.pill { display: inline-block; border-radius: 999px; padding: 1px 9px; font-size: 0.75rem; font-weight: 500; margin: 1px 2px 1px 0; border: 1px solid transparent; white-space: nowrap; }
+.pill-tenant { background: #eff6ff; color: #1d4ed8; border-color: #bfdbfe; }
+.pill-role { background: #f3f4f6; color: #374151; border-color: #d1d5db; }
+.pill-scope-AllTenants { background: #fef2f2; color: #b91c1c; border-color: #fecaca; }
+.pill-scope-AssignedTenants { background: #fff7ed; color: #c2410c; border-color: #fed7aa; }
+.pill-scope-Team { background: #ecfdf5; color: #047857; border-color: #a7f3d0; }
+.pill-scope-Self { background: #f5f3ff; color: #6d28d9; border-color: #ddd6fe; }
+.pill-me { background: var(--demo-accent); color: #fff; }
+
+.demo-table { width: 100%; border-collapse: collapse; background: #fff; font-size: 0.88rem; }
+.demo-table th { text-align: left; font-weight: 600; color: var(--demo-muted); font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.03em; padding: 10px 12px; border-bottom: 1px solid var(--demo-line); background: var(--demo-soft); }
+.demo-table td { padding: 10px 12px; border-bottom: 1px solid var(--demo-line); vertical-align: top; }
+.demo-table tr.is-me td { background: #f0f7ff; }
+.demo-table code { font-size: 0.78rem; color: #0f172a; background: #f1f5f9; padding: 2px 5px; border-radius: 4px; white-space: nowrap; }
+.demo-table-wrap { border: 1px solid var(--demo-line); border-radius: 10px; overflow-x: auto; }
+.demo-table-wrap .demo-table tr:last-child td { border-bottom: 0; }
+.user-name { font-weight: 600; }
+.user-sub { color: var(--demo-muted); font-size: 0.8rem; }
+
+.btn-impersonate {
+    background: #fff; border: 1px solid #d1d5db; color: var(--demo-ink); border-radius: 6px; padding: 3px 10px; font-size: 0.8rem; white-space: nowrap;
+}
+.btn-impersonate:hover { border-color: var(--demo-accent); color: var(--demo-accent); }
+
+/* org chart */
+.org-tree, .org-tree ul { list-style: none; margin: 0; padding: 0; }
+.org-tree ul { margin-left: 22px; padding-left: 16px; border-left: 1px dashed #cbd5e1; }
+.org-tree li { position: relative; padding: 5px 0; }
+.org-tree ul > li::before { content: ""; position: absolute; left: -16px; top: 20px; width: 12px; border-top: 1px dashed #cbd5e1; }
+.org-node { display: inline-flex; align-items: center; gap: 10px; flex-wrap: wrap; background: #fff; border: 1px solid var(--demo-line); border-radius: 8px; padding: 6px 10px; }
+.org-node.is-me { border-color: var(--demo-accent); box-shadow: 0 0 0 2px #dbeafe; }
+.org-node form { margin: 0; }
+
+
+.login-page { max-width: 420px; padding-top: 64px; }
+.login-page h1 { margin-bottom: 20px; }

@@ -1,0 +1,174 @@
+@using MultiTenantDemo.Security
+@model UsersPageModel
+@{
+    ViewData["Title"] = "Users & Access";
+    var me = Model.Me;
+    var scopeNote = me.DataScope switch
+    {
+        "AllTenants" => "As a platform admin you see every user in every tenant.",
+        "AssignedTenants" => "You see the users of the tenants you're assigned to.",
+        "Team" => "You see yourself and the people who report to you.",
+        _ => "You only see yourself."
+    };
+}
+
+@{
+    void ImpersonateButton(UserRow row)
+    {
+        if (row.CanImpersonate)
+        {
+            <!form method="post" action="/Account/Impersonate">
+                @Html.AntiForgeryToken()
+                <input type="hidden" name="userId" value="@row.User.UserId" />
+                <input type="hidden" name="returnUrl" value="/" />
+                <button type="submit" class="btn-impersonate" title="See the app exactly as @row.User.FullName does"><i class="fa fa-user-secret"></i> Impersonate</button>
+            </!form>
+        }
+    }
+
+    void OrgNode(UserRow row)
+    {
+        var isMe = row.User.UserId == me.User.UserId;
+        <li>
+            <div class="org-node @(isMe ? "is-me" : "")">
+                <span>
+                    <span class="user-name">@row.User.FullName</span>
+                    <span class="user-sub">@row.User.Title</span>
+                </span>
+                @foreach (var r in row.User.Roles)
+                {
+                    <span class="pill pill-role">@r.Name</span>
+                }
+                @foreach (var t in row.Profile.AllowedTenants)
+                {
+                    <span class="pill pill-tenant">@t.Code</span>
+                }
+                <span class="user-sub">@row.VisibleOrders.ToString("N0") orders visible</span>
+                @if (isMe) { <span class="pill pill-me">You</span> }
+                @{ ImpersonateButton(row); }
+            </div>
+            @{ var reports = Model.ReportsOf(row.User.UserId).ToList(); }
+            @if (reports.Any())
+            {
+                <ul>
+                    @foreach (var child in reports) { OrgNode(child); }
+                </ul>
+            }
+        </li>
+    }
+}
+
+<div class="demo-page">
+    <h1>Users &amp; Access</h1>
+    <p class="lede">
+        Roles decide the <em>kind</em> of access, tenant memberships decide <em>which customers</em>, and the reporting line decides
+        <em>whose rows</em>. Together they produce each user's Dotnet Report <code>DataFilters</code>. @scopeNote
+        @if (Model.IsImpersonating)
+        {
+            <strong>Impersonation is off while you're already impersonating someone.</strong>
+        }
+    </p>
+
+    <h2>Reporting hierarchy</h2>
+    <div class="demo-card">
+        <ul class="org-tree">
+            @foreach (var root in Model.Roots) { OrgNode(root); }
+        </ul>
+    </div>
+
+    <h2>Users and what they can see</h2>
+    <div class="demo-table-wrap">
+        <table class="demo-table">
+            <thead>
+                <tr>
+                    <th>User</th>
+                    <th>Roles</th>
+                    <th>Scope</th>
+                    <th>Tenants</th>
+                    <th>Reports to</th>
+                    <th>DataFilters sent to Dotnet Report</th>
+                    <th class="num">Orders</th>
+                    <th class="num">Revenue</th>
+                    <th></th>
+                </tr>
+            </thead>
+            <tbody>
+                @foreach (var row in Model.Rows)
+                {
+                    <tr class="@(row.User.UserId == me.User.UserId ? "is-me" : "")">
+                        <td>
+                            <div class="user-name">@row.User.FullName</div>
+                            <div class="user-sub">@row.User.Title</div>
+                            <div class="user-sub">@row.User.Email</div>
+                        </td>
+                        <td>@foreach (var r in row.User.Roles) { <span class="pill pill-role">@r.Name</span> }</td>
+                        <td><span class="pill pill-scope-@row.Profile.DataScope">@row.Profile.DataScope</span></td>
+                        <td>@foreach (var t in row.Profile.AllowedTenants) { <span class="pill pill-tenant">@t.Code</span> }</td>
+                        <td>
+                            @(row.Manager?.FullName ?? "-")
+                            @if (row.DirectReports > 0)
+                            {
+                                <div class="user-sub">@row.DirectReports direct report@(row.DirectReports == 1 ? "" : "s")</div>
+                            }
+                        </td>
+                        <td>
+                            @foreach (var f in row.Profile.DataFilters)
+                            {
+                                <div><code>@f.Key IN (@f.Value)</code></div>
+                            }
+                        </td>
+                        <td class="num">@row.VisibleOrders.ToString("N0")</td>
+                        <td class="num">@row.VisibleRevenue.ToString("C0")</td>
+                        <td>@{ ImpersonateButton(row); }</td>
+                    </tr>
+                }
+            </tbody>
+        </table>
+    </div>
+
+    <h2>Roles</h2>
+    <div class="demo-table-wrap">
+        <table class="demo-table">
+            <thead>
+                <tr><th>Role</th><th>Description</th><th>Data scope</th><th>Admin mode</th><th>Setup</th><th>Impersonate</th><th class="num">Users</th></tr>
+            </thead>
+            <tbody>
+                @foreach (var r in Model.Directory.Roles)
+                {
+                    <tr>
+                        <td><span class="pill pill-role">@r.Name</span></td>
+                        <td>@r.Description</td>
+                        <td><span class="pill pill-scope-@r.DataScope">@r.DataScope</span></td>
+                        <td>@(r.CanUseAdminMode ? "Yes" : "-")</td>
+                        <td>@(r.CanAccessSetup ? "Yes" : "-")</td>
+                        <td>@(r.CanImpersonate ? r.DataScope switch { "AllTenants" => "Anyone", "AssignedTenants" => "Users in their tenants", _ => "Their team" } : "-")</td>
+                        <td class="num">@Model.Directory.Users.Count(u => u.Roles.Contains(r))</td>
+                    </tr>
+                }
+            </tbody>
+        </table>
+    </div>
+
+    <h2>Tenants you can access</h2>
+    <div class="demo-table-wrap">
+        <table class="demo-table">
+            <thead>
+                <tr><th>Tenant</th><th>ClientId</th><th>Industry</th><th>Region</th><th class="num">Users</th><th class="num">All orders</th><th class="num">All revenue</th></tr>
+            </thead>
+            <tbody>
+                @foreach (var t in Model.Tenants)
+                {
+                    <tr>
+                        <td><span class="user-name">@t.Tenant.Name</span> <span class="user-sub">TenantId @t.Tenant.TenantId</span></td>
+                        <td><code>@t.Tenant.Code</code></td>
+                        <td>@t.Tenant.Industry</td>
+                        <td>@t.Tenant.Region</td>
+                        <td class="num">@t.Users</td>
+                        <td class="num">@t.Orders.ToString("N0")</td>
+                        <td class="num">@t.Revenue.ToString("C0")</td>
+                    </tr>
+                }
+            </tbody>
+        </table>
+    </div>
+</div>
