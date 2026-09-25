@@ -8,10 +8,12 @@ using System.Text.Json;
 using System.Text.RegularExpressions;
 using System.Web;
 using JsonConvert = Newtonsoft.Json.JsonConvert;
+using System.Security.Claims;
+using MultiTenantDemo.Security; // multi-tenant demo: DemoDirectoryProvider (pick-lists)
 
 namespace ReportBuilder.Web.Controllers
 {
-    //[Authorize]
+    [Authorize] // multi-tenant demo: sign-in required
     [Route("api/[controller]/[action]")]
     [ApiController]
     public class DotNetReportApiController : ControllerBase
@@ -35,18 +37,31 @@ namespace ReportBuilder.Web.Controllers
                 DataConnectApiToken = _configuration.GetValue<string>("dotNetReport:dataconnectApiToken") // Your Data Connect Api Token from your http://dotnetreport.com Account            };
             };
 
-            // Populate the values below using your Application Roles/Claims if applicable
-            settings.ClientId = "";  // You can pass your multi-tenant client id here to track their reports and folders
-            settings.UserId = ""; // You can pass your current authenticated user id here to track their reports and folders            
-            settings.UserName = "";
-            settings.CurrentUserRole = new List<string>(); // Populate your current authenticated user's roles
+            // Multi-tenant demo: everything below comes from the claims issued at sign-in (AccountController).
+            // Never read these from the request - the user could change them.
+            var user = User;
+
+            settings.ClientId = user.FindFirst("client_id")?.Value ?? "";  // Active tenant code, e.g. "ACME". Scopes saved reports and folders; "" = shared with every tenant
+            settings.UserId = user.FindFirst(ClaimTypes.NameIdentifier)?.Value ?? ""; // Signed-in user's email. Tracks report ownership and sharing
+            settings.UserName = user.Identity?.Name ?? "";
+            settings.CurrentUserRole = user.FindAll(ClaimTypes.Role).Select(c => c.Value).ToList(); // e.g. { "SalesManager" }
             settings.UserIdForFilter=settings.UserId;
             settings.UserIdForSchedule = settings.UserId;
-            settings.Users = new List<dynamic>() { }; // Populate all your application's user, ex  { "Jane", "John" } or { new { id="1", text="Jane" }, new { id="2", text="John" }}
-            settings.UserRoles = new List<string>() { }; // Populate all your application's user roles, ex  { "Admin", "Normal" }
-            settings.ClientIds = new List<string>() { }; // Populate all your application's client/tenant ids, ex  { "ACME", "CONTOSO" }
-            settings.CanUseAdminMode = true; // Set to true only if current user can use Admin mode to setup reports, dashboard and schema
-            settings.DataFilters = new { }; // add global data filters to apply as needed https://dotnetreport.com/kb/docs/advance-topics/global-filters/
+            var directory = HttpContext?.RequestServices.GetService<DemoDirectoryProvider>();
+            settings.Users = directory?.UsersVisibleTo(user) ?? new List<dynamic>(); // Users this person may share reports with, { id = email, text = name }
+            settings.UserRoles = directory?.RoleNames() ?? new List<string>(); // { "PlatformAdmin", "TenantAdmin", "SalesManager", ... }
+            settings.ClientIds = (user.FindFirst("allowed_tenant_codes")?.Value ?? "").Split(',', StringSplitOptions.RemoveEmptyEntries).ToList(); // Tenants this person can restrict reports to
+            settings.CanUseAdminMode = user.FindFirst("can_admin_mode")?.Value == "True"; // PlatformAdmin and TenantAdmin only
+
+            // Row-level security. The engine appends  AND [Table].[TenantId] IN (...)  to every query on a table with a
+            // TenantId column, and  AND [Table].[SalesRepId] IN (...)  for managers (their team) and reps (themselves).
+            var tenantIds = user.FindFirst("tenant_ids")?.Value;          // e.g. "1" or "1,2"
+            var salesRepIds = user.FindFirst("salesrep_ids")?.Value;      // e.g. "12,13,14"; absent for admins and support
+            if (string.IsNullOrEmpty(tenantIds)) tenantIds = "-1";         // fail closed: no tenant, no rows
+            if (string.IsNullOrEmpty(salesRepIds))
+                settings.DataFilters = new { TenantId = tenantIds };
+            else
+                settings.DataFilters = new { TenantId = tenantIds, SalesRepId = salesRepIds };
             DotNetReportHelper.CurrentDataFilters = JsonSerializer.Serialize(settings.DataFilters);
 
             return settings;
@@ -1161,7 +1176,9 @@ namespace ReportBuilder.Web.Controllers
             var newReportViewUserRoles = ""; // comma separated user roles for report view permission when new report is created
 
             var managed = GetManagedUsersAndRoles(settings);
-            var userSource = managed?.userSource ?? "code";
+            // Multi-tenant demo: users, roles and tenants always come from GetSettings() (the MultiTenantDemo database),
+            // whatever source the shared demo account has selected in Setup > Users & Roles.
+            var userSource = "code";
             var codeClientIds = settings.ClientIds.Select(c => (object)new AccountListItem { id = c, text = c }).ToList();
             List<object> users, clientIds;
             List<string> userRoles;

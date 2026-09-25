@@ -7,7 +7,7 @@ using System.Web;
 
 namespace ReportBuilder.Web.Controllers
 {
-    //[Authorize]
+    [Authorize] // multi-tenant demo: sign-in required
     public class DotNetReportController : Controller
     {
         private readonly IConfiguration _configuration;
