@@ -1,0 +1,1987 @@
+/// .Net Report Builder helper methods
+
+// Ajax call wrapper function
+var activeBlockUICount = 0;
+
+function ajaxcall(options) {
+    var noBlocking = options.noBlocking === true;
+    var useProgressBar = options.useProgressBar === true;
+    var progressBarMessage = options.progressBarMessage || "Processing...";
+    var progressBarId = 'ajaxProgressBarPopup';
+    var progressInterval;
+
+    if (useProgressBar && !document.getElementById(progressBarId)) {
+        $('body').append(`
+            <div id="${progressBarId}" class="progress-popup" style="position: fixed; top: 20px; right: 20px; z-index: 1050; width: 300px; display: none; background: #f8f9fa; border: 1px solid #dee2e6; border-radius: 8px; box-shadow: 0px 0px 10px rgba(0,0,0,0.1);">
+                <div class="progress-popup-header" style="padding: 8px 12px; font-weight: bold; cursor: move; background: #007bff; color: #fff; border-top-left-radius: 8px; border-top-right-radius: 8px;">
+                    <span>${progressBarMessage}</span>
+                    <button type="button" class="close" style="background: none; border: none; color: #fff; float: right; font-size: 20px; line-height: 1;" onclick="$('#${progressBarId}').hide();">&times;</button>
+                </div>
+                <div class="progress" style="height: 10px; margin: 12px;">
+                    <div class="progress-bar progress-bar-striped progress-bar-animated bg-success" role="progressbar" style="width: 0%;" aria-valuenow="0" aria-valuemin="0" aria-valuemax="100"></div>
+                </div>
+            </div>
+        `);
+
+        $('#' + progressBarId).draggable({ handle: ".progress-popup-header" });
+    }
+
+    var $progressBarPopup = $('#' + progressBarId);
+    var $progressBar = $progressBarPopup.find('.progress-bar');
+    var currentProgress = 0;
+
+    function showProgress() {
+        $progressBarPopup.find('.progress-popup-header span').text(progressBarMessage);
+        $progressBarPopup.show();
+        currentProgress = 0;
+        $progressBar.css('width', currentProgress + '%').attr('aria-valuenow', currentProgress);
+
+        progressInterval = setInterval(function () {
+            if (currentProgress < 90) {
+                currentProgress += 10;
+                $progressBar.css('width', currentProgress + '%').attr('aria-valuenow', currentProgress);
+            }
+        }, 500);
+    }
+
+    function completeProgress() {
+        clearInterval(progressInterval);
+        $progressBar.css('width', '100%').attr('aria-valuenow', 100);
+        setTimeout(hideProgress, 500);
+    }
+
+    function hideProgress() {
+        $progressBarPopup.hide();
+    }
+
+    options.hideProgress = hideProgress;
+
+    if ($.blockUI && !noBlocking && !useProgressBar) {
+        if (activeBlockUICount === 0) {
+            $.blockUI({ baseZ: 500 });
+        }
+        activeBlockUICount++;
+    }
+
+    // setup your app auth here optionally
+    var tokenKey = 'token-key';
+    var token = JSON.parse(localStorage.getItem(tokenKey));
+    var headers = new Headers();
+    headers.append('Authorization', 'Bearer ' + token);
+
+    var validationToken = $('input[name="__RequestVerificationToken"]').val();
+    if (options.type == 'POST' && validationToken) {
+        options.headers = options.headers || {};
+        options.headers['RequestVerificationToken'] = validationToken;
+    }
+
+    var wasJson = false;
+    if (typeof options.data === 'string') {
+        wasJson = true;
+        options.data = JSON.parse(options.data);
+    }
+    options.data = options.data || {};
+    if (window.currentUserId) {
+        options.data.userId = window.currentUserId;
+    }
+    if (wasJson) {
+        options.data = JSON.stringify(options.data);
+    }
+
+    var beforeSend = function (x) {
+        if (token && !options.url.startsWith("https://dotnetreport.com")) {
+            x.setRequestHeader("Authorization", "Bearer " + token);
+        }
+        if (useProgressBar) showProgress();
+    }
+    var xhr = function () {
+        var xhr = new window.XMLHttpRequest();
+        if (useProgressBar) {
+            xhr.upload.addEventListener("progress", function (evt) {
+                if (evt.lengthComputable) {
+                    var percentComplete = Math.min(90, Math.round((evt.loaded / evt.total) * 90));
+                    $progressBar.css('width', percentComplete + '%').attr('aria-valuenow', percentComplete);
+                }
+            }, false);
+            xhr.addEventListener("progress", function (evt) {
+                if (evt.lengthComputable) {
+                    var percentComplete = Math.min(90, Math.round((evt.loaded / evt.total) * 90));
+                    $progressBar.css('width', percentComplete + '%').attr('aria-valuenow', percentComplete);
+                }
+            }, false);
+        }
+        return xhr;
+    }
+
+    var exportId = $("#exportId").val();
+    if (exportId) {
+        if (options.type && options.type.toUpperCase() === "POST") {
+            options.data = options.data || {};
+            if (typeof options.data === "string") {
+                var obj = JSON.parse(options.data || "{}");
+                obj.exportId = exportId;
+                options.data = JSON.stringify(obj);
+            } else {
+                options.data.exportId = exportId;
+            }
+        } else {
+            options.url += (options.url.indexOf("?") === -1 ? "?" : "&") + "exportId=" + encodeURIComponent(exportId);
+        }
+    }
+
+    if (options.success) {
+        options.beforeSend = beforeSend;
+        options.xhr = xhr;
+
+        return $.ajax(options);
+    }
+
+    return $.ajax({
+        url: options.url,
+        type: options.type || "GET",
+        data: options.data,
+        cache: options.cache || false,
+        dataType: options.dataType || "json",
+        contentType: options.contentType || "application/json; charset=utf-8",
+        headers: options.headers || {},
+        async: options.async === false ? options.async : true,
+        xhr: xhr,
+        beforeSend: beforeSend
+    }).done(function (data) {
+            if (useProgressBar) {
+                completeProgress();
+            }
+            if ($.unblockUI && !noBlocking) {
+                activeBlockUICount = Math.max(0, activeBlockUICount - 1);
+                if (activeBlockUICount === 0) {
+                    $.unblockUI();
+                }
+            }
+            delete options;
+        })
+        .fail(function (jqxhr, status, error) {
+            if (useProgressBar) {
+                hideProgress();
+            }
+            if ($.unblockUI) {
+                $.unblockUI();
+            }
+            delete options;
+            handleAjaxError(jqxhr, status, error);
+        });
+}
+
+
+function handleAjaxError(jqxhr, status, error) {
+    if (jqxhr.responseJSON && jqxhr.responseJSON.d) jqxhr.responseJSON = jqxhr.responseJSON.d;
+    if (jqxhr.responseJSON && jqxhr.responseJSON.Result && jqxhr.responseJSON.Result.Message) jqxhr.responseJSON = jqxhr.responseJSON.Result;
+    var msg = jqxhr.responseJSON ? "\n" + (jqxhr.responseJSON.Message || jqxhr.responseJSON.message || jqxhr.responseJSON.errorMessage || "") : "";
+
+    switch (error) {
+        case "Conflict":
+            toastr.error("Conflict detected. Please ensure the record is not a duplicate and that it has no related records." + msg);
+            break;
+        case "Bad Request":
+            toastr.error("Validation failed for your request. Please make sure the data provided is correct." + msg);
+            break;
+        case "Unauthorized":
+            toastr.error("You are not authorized to make that request." + msg);
+            break;
+        case "Forbidden":
+            location.reload(true);
+            break;
+        case "Not Found":
+            toastr.error("Record not found." + msg);
+            break;
+        case "Internal Server Error":
+            toastr.error("The system was unable to complete your request. <br>Service Response: " + msg);
+            break;
+        default:
+            toastr.error(status + ": " + msg);
+    }
+}
+
+function downloadJson(content, fileName, contentType) {
+    var jsonBlob = new Blob([content], { type: contentType });
+    var url = URL.createObjectURL(jsonBlob);
+    var a = document.createElement('a');
+    a.href = url;
+    a.download = fileName;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    window.URL.revokeObjectURL(url);
+}
+   // knockout binding extenders
+ko.bindingHandlers.stopBindings = {
+    init: function () {
+        return { controlsDescendantBindings: true };
+    }
+};
+
+ko.bindingHandlers.bsPopover = {
+    init: function (element, valueAccessor) {
+        var opts = valueAccessor() || {};
+        opts.sanitize = false;
+        var pop = new bootstrap.Popover(element, opts);
+        ko.utils.domNodeDisposal.addDisposeCallback(element, function () {
+            pop.dispose();
+        });
+    }
+};
+
+ko.bindingHandlers.datepicker = {
+    init: function (element, valueAccessor, allBindingsAccessor) {
+        //initialize datepicker with some optional options
+        var options = allBindingsAccessor().datepickerOptions || {};
+        if (!options.dateFormat && window._defaultDateFormat) {
+            options.dateFormat = window._defaultDateFormat;
+        }
+        $(element).datepicker(options);
+
+        //handle the field changing
+        ko.utils.registerEventHandler(element, "change", function () {
+           var observable = valueAccessor();
+           var date = $(element).datepicker('getDate');
+            if (date) {
+                var value = options.value;
+                if (value) value(date.toLocaleDateString('en-US', { year: 'numeric', month: '2-digit', day: '2-digit' }));
+            }
+        });
+
+        ko.utils.domNodeDisposal.addDisposeCallback(element, function () {
+            $(element).datepicker("destroy");
+        });
+
+    },
+    //update the control when the view model changes
+    update: function (element, valueAccessor) {
+        var value = ko.utils.unwrapObservable(valueAccessor());
+        if (value === null || value === undefined) {
+            $(element).datepicker("setDate", null);
+            $(element).val('');
+        } else if (value) {
+            var fmt = $(element).datepicker("option", "dateFormat") || window._defaultDateFormat || 'mm/dd/yy';
+            var formattedDate = $.datepicker.formatDate(fmt, new Date(value));
+            if (formattedDate !== $(element).val()) {
+                $(element).datepicker("setDate", formattedDate);
+            }
+        }
+    }
+};
+
+ko.bindingHandlers.fadeVisible = {
+    init: function (element, valueAccessor) {
+        // Initially set the element to be instantly visible/hidden depending on the value
+        var value = valueAccessor();
+        $(element).toggle(ko.utils.unwrapObservable(value)); // Use "unwrapObservable" so we can handle values that may or may not be observable
+    },
+    update: function (element, valueAccessor) {
+        // Whenever the value subsequently changes, slowly fade the element in or out
+        var value = valueAccessor();
+        ko.utils.unwrapObservable(value) ? $(element).fadeIn("slow") : $(element).hide();
+    }
+};
+
+ko.bindingHandlers.checkedInArray = {
+    init: function (element, valueAccessor) {
+        ko.utils.registerEventHandler(element, "click", function () {
+            var options = ko.utils.unwrapObservable(valueAccessor()),
+                array = options.array, // don't unwrap array because we want to update the observable array itself
+                value = ko.utils.unwrapObservable(options.value),
+                checked = element.checked;
+            if (value && value.dynamicTableId !== null && value.fieldId === 0) {
+                var arraylist = ko.utils.unwrapObservable(array);
+                var matchingItem = arraylist.find(item => item.fieldName === value.fieldName && item.dynamicTableId === value.dynamicTableId);
+                value = matchingItem || value;
+            }
+            ko.utils.addOrRemoveItem(array, value, checked);
+        });
+    },
+    update: function (element, valueAccessor) {
+        var options = ko.utils.unwrapObservable(valueAccessor()),
+            array = ko.utils.unwrapObservable(options.array),
+            value = ko.utils.unwrapObservable(options.value);
+            isChecked = ko.utils.arrayIndexOf(array, value) >= 0;
+        if (value && value.dynamicTableId !== null && value.fieldId === 0) {
+            var matchingItem = array.find(item => item.fieldName === value.fieldName && item.dynamicTableId === value.dynamicTableId);
+            if (matchingItem) {
+                isChecked = true;
+            }
+        }
+        element.checked = isChecked;
+    }
+};
+
+ko.bindingHandlers.select2 = {
+    after: ["options", "value"],
+    init: function (el, valueAccessor, allBindingsAccessor, viewModel) {
+        var allBindings = allBindingsAccessor();
+        var s2opts = $.extend(
+            {
+                width: '100%',
+                dropdownParent: $(el).closest('.modal').length ? $(el).closest('.modal') : $(document.body),
+                templateResult: function (item) {
+                    if (!item.text) return item.text;
+                    return $('<span style="white-space: pre;">' + item.text + '</span>');
+                },
+                templateSelection: function (item) {
+                    if (!item.text) return item.text;
+                    return $('<span style="white-space: pre;">' + item.text + '</span>');
+                },
+                escapeMarkup: function (markup) {
+                    return markup; // IMPORTANT
+                }
+
+            },
+            ko.unwrap(valueAccessor()) || {}
+        );
+        // Always use closest modal as dropdownParent if element is inside a modal
+        if ($(el).closest('.modal').length) {
+            s2opts.dropdownParent = $(el).closest('.modal');
+        }
+        $(el).select2(s2opts);
+
+        var lookupSearch = allBindings.lookupSearch;
+        if (typeof lookupSearch === 'function') {
+            var searchTimer;
+            $(el).on('select2:open.lookupsearch', function () {
+                var $search = $('.select2-container--open .select2-search__field');
+                $search.off('input.lookupsearch').on('input.lookupsearch', function () {
+                    var term = this.value;
+                    clearTimeout(searchTimer);
+                    searchTimer = setTimeout(function () {
+                        var p = lookupSearch(term);
+                        if (p && p.done) p.done(function () { $(el).trigger('change.select2'); });
+                    }, 350);
+                });
+            });
+        }
+        // Sync user selection back to KO value observable (Select2 v4)
+        $(el).on('change.select2binding', function () {
+            if (allBindings.value && ko.isObservable(allBindings.value)) {
+                var raw = $(el).val();
+                allBindings.value(raw ? (isNaN(raw) ? raw : parseInt(raw, 10)) : null);
+            }
+        });
+        ko.utils.domNodeDisposal.addDisposeCallback(el, function () {
+            $(el).off('change.select2binding');
+            $(el).off('select2:open.lookupsearch');
+            if (el && $(el).length && $(el).data('select2')) {
+                $(el).select2('destroy');
+            }
+        });
+    },
+    update: function (el, valueAccessor, allBindingsAccessor, viewModel) {
+        var allBindings = allBindingsAccessor();
+        if (!$(el).data('select2')) return;
+        if (allBindings.selectedOptions && ko.isObservable(allBindings.selectedOptions)) {
+            var selectedVals = ko.unwrap(allBindings.selectedOptions) || [];
+            $(el).val(selectedVals).trigger('change.select2');
+
+        } else if ("value" in allBindings) {
+            var newValue = ko.unwrap(allBindings.value);
+            $(el).val(newValue != null ? newValue : null).trigger('change.select2');
+        }
+    }
+};
+
+ko.bindingHandlers.select2Value = {
+    init: function (element, valueAccessor, allBindingsAccessor) {
+        var allBindings = allBindingsAccessor();
+        var value = ko.unwrap(valueAccessor());
+
+        // Initialize select2
+        var s2ValOpts = allBindings.select2Value || {};
+        if ($(element).closest('.modal').length) {
+            s2ValOpts.dropdownParent = $(element).closest('.modal');
+        }
+        $(element).select2(s2ValOpts);
+
+        // When an item is selected, update the observable with the full item object
+        $(element).on('select2:select', function (e) {
+            var selectedItem = e.params.data;
+            //valueAccessor()(selectedItem); // Update the observable with the full object
+        });
+
+        // Handle clearing the selection
+        $(element).on('select2:unselect', function () {
+            valueAccessor()(null);
+        });
+    },
+    update: function (element, valueAccessor) {
+        var value = ko.unwrap(valueAccessor());
+        $(element).val(value ? value.id : null).trigger('change');
+    }
+};
+
+ko.bindingHandlers.select2Text = {
+    init: function (element, valueAccessor, allBindings, viewModel, bindingContext) {
+        var options = allBindings.get('select2') || {};
+        var idObservable = allBindings.get('select2TableId');
+        $(element).select2(options);
+
+        $(element).on('select2:select', function (event) {
+            var selectedText = event.params.data.text;
+            var value = valueAccessor();
+            value(selectedText);  // Set the observable to the selected text instead of the id
+            if (ko.isObservable(idObservable)) {
+                idObservable(event.params.data.tableId); // adjust based on object
+            }
+        });
+    },
+    update: function (element, valueAccessor, allBindings) {
+        var value = ko.unwrap(valueAccessor());
+        $(element).val(value).trigger('change');
+    }
+};
+ko.bindingHandlers.notifyChange = {
+    init: function (element, valueAccessor, allBindings, viewModel, bindingContext) {
+        const callback = valueAccessor(); // function to call
+        element.addEventListener('change', function () {
+            callback(element.value); // Pass selected value
+        });
+    }
+};
+
+ko.bindingHandlers.highlightedText = {
+    update: function (element, valueAccessor) {
+        var options = valueAccessor();
+        var value = ko.utils.unwrapObservable(options.text) || '';
+        var search = ko.utils.unwrapObservable(options.highlight) || '';
+        var css = ko.utils.unwrapObservable(options.css) || 'highlight';
+
+        // Escape special characters in the search term
+        var escapedSearch = search.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&');
+
+        // Create a regular expression with case-insensitive flag
+        var regex = new RegExp(escapedSearch, 'gim');
+
+        function getReplacement(match) {
+            return '<span class="' + css + '">' + match + '</span>';
+        }
+
+        element.innerHTML = value.replace(regex, getReplacement);
+    }
+};
+
+ko.bindingHandlers.tableSortable = {
+    init: function (element, valueAccessor) {
+        const options = valueAccessor();
+
+        $(element).sortable({
+            cursor: "move",
+            placeholder: options.placeholder || "sortable-placeholder",
+            handle: options.handle || null,
+            helper: function (e, tr) {
+                const $originals = tr.children();
+                const $helper = tr.clone();
+                $helper.children().each(function (index) {
+                    $(this).width($originals.eq(index).width());
+                });
+                return $helper;
+            },
+            update: function (e, ui) {
+                const item = ko.dataFor(ui.item[0]);
+                const array = ko.unwrap(options.data);
+
+                const oldIndex = ui.item.data("oldIndex");
+                const newIndex = ui.item.index();
+
+                if (oldIndex !== newIndex) {
+                    array.splice(oldIndex, 1);
+                    array.splice(newIndex, 0, item);
+                    if (typeof options.afterMove === "function") {
+                        options.afterMove({ item, oldIndex, newIndex });
+                    }
+                }
+            },
+            start: function (e, ui) {
+                ui.item.data("oldIndex", ui.item.index());
+            }
+        });
+    }
+};
+
+ko.bindingHandlers.sortableColumns = {
+    init: function (element, valueAccessor, allBindingsAccessor, viewModel, bindingContext) {
+        var options = valueAccessor() || {};
+        var selectedFields = options.selectedFields;
+        $(element).sortable({
+            items: "> th",
+            handle: options.handle || ".sortable",
+            axis: options.axis || "x", // Restrict to horizontal movement
+            cursor: options.cursor || "move",
+            placeholder: options.placeholder || "drop-highlight",
+            stop: function (event, ui) {
+                var newOrder = $(element).sortable("toArray");
+                var itemId = ui.item.attr('id');
+                var isPivotColumn = itemId.includes('pivot--');
+                if (isPivotColumn) {
+                    var pivotColumnOrder = newOrder.filter(function (item) {
+                        return item.includes('pivot--');
+                    });
+                    if (pivotColumnOrder.length > 0) {
+                        var pivotColumnOrderWithoutPrefix = pivotColumnOrder.map(function (item) {
+                            return '[' + item.replace('pivot--', '') + ']';
+                        });
+                        var pivotColumnOrderString = pivotColumnOrderWithoutPrefix.join(',');
+                        bindingContext.$parents[2].PivotColumns(pivotColumnOrderString);
+                    }
+                }
+                else if (ko.isObservable(selectedFields)) {
+                    var sortedFields = selectedFields().slice().sort(function (a, b) {
+                        var indexA = newOrder.indexOf(a.fieldId.toString());
+                        var indexB = newOrder.indexOf(b.fieldId.toString());
+                        return indexA - indexB;
+                    });
+                    selectedFields(sortedFields);
+                }
+                bindingContext.$parents[2].sortReportHeaderColumn();
+            }
+        }).disableSelection(); // Prevent text selection while dragging
+    }
+};
+
+ko.bindingHandlers.moveToInlineContainer = {
+    init: function (element, valueAccessor) {
+        var data = ko.unwrap(valueAccessor());
+        if (data && data._isInline) {
+            var tryMove = function (attempts) {
+                // Scope search to the sibling renderedHtml div within the same row
+                // DOM structure: foreach:Rows > [div html:renderedHtml] [div foreach:subReportsRan > element]
+                var searchScope = null;
+                var subReportsDiv = element.parentElement; // foreach:subReportsRan div
+                if (subReportsDiv) {
+                    searchScope = subReportsDiv.previousElementSibling; // html:renderedHtml div
+                }
+                if (!searchScope) {
+                    searchScope = document; // fallback
+                }
+                var selector = '.subreport-inline-container[data-subreport-report-id="' + data._inlineReportId + '"][data-subreport-field-id="' + data._inlineFieldId + '"]';
+                var container = searchScope.querySelector(selector);
+                if (container) {
+                    // Clear previous binding if placeholder was replaced
+                    if (container._bound) {
+                        ko.cleanNode(container);
+                        container.innerHTML = '';
+                    }
+                    container._bound = true;
+                    container._boundData = data;
+                    var wrapper = document.createElement('div');
+                    container.appendChild(wrapper);
+                    ko.applyBindingsToNode(wrapper, { template: { name: 'subreport-content', data: data } });
+                } else if (attempts > 0) {
+                    setTimeout(function () { tryMove(attempts - 1); }, 200);
+                }
+            };
+            setTimeout(function () { tryMove(8); }, 100);
+        }
+    }
+};
+
+function stripPositionRelativeDeclaration(style) {
+    if (!style) return style;
+    return style
+        .replace(/(?:^|;)\s*position\s*:\s*relative\s*(?=;|$)/i, '')
+        .replace(/^\s*;+\s*/, '')
+        .replace(/;\s*$/, '')
+        .trim();
+}
+
+function stripTableResizeArtifacts(html) {
+    if (!html) return html;
+    var wrapper = document.createElement('div');
+    wrapper.innerHTML = html;
+
+    wrapper.querySelectorAll('.resize-col, .resize-row, .resize-corner').forEach(function (handle) {
+        if (handle.parentNode) handle.parentNode.removeChild(handle);
+    });
+
+    wrapper.querySelectorAll('.dnr-resize-anchor').forEach(function (el) {
+        el.classList.remove('dnr-resize-anchor');
+        if (!el.getAttribute('class')) el.removeAttribute('class');
+    });
+
+    wrapper.querySelectorAll('table[style], th[style], td[style]').forEach(function (el) {
+        var raw = el.getAttribute('style');
+        var stripped = stripPositionRelativeDeclaration(raw);
+        if (stripped !== raw) {
+            if (stripped) el.setAttribute('style', stripped);
+            else el.removeAttribute('style');
+        }
+    });
+
+    return wrapper.innerHTML;
+}
+
+var _dnrUnsafeElements = { SCRIPT: 1, IFRAME: 1, OBJECT: 1, EMBED: 1, APPLET: 1, LINK: 1, META: 1, BASE: 1, FRAME: 1, FRAMESET: 1 };
+var _dnrUriAttributes = ['href', 'src', 'xlink:href', 'action', 'formaction', 'data'];
+
+function sanitizeReportHtml(html) {
+    if (html == null || typeof html !== 'string' || html.indexOf('<') < 0) return html;
+
+    var doc;
+    try {
+        doc = new DOMParser().parseFromString(html, 'text/html');
+    } catch (e) {
+        return '';
+    }
+
+    var all = doc.body.querySelectorAll('*');
+    for (var i = all.length - 1; i >= 0; i--) {
+        var el = all[i];
+        if (_dnrUnsafeElements[el.tagName]) {
+            if (el.parentNode) el.parentNode.removeChild(el);
+            continue;
+        }
+        for (var j = el.attributes.length - 1; j >= 0; j--) {
+            var attr = el.attributes[j];
+            var name = attr.name.toLowerCase();
+            if (name.indexOf('on') === 0 || name === 'srcdoc') {
+                el.removeAttribute(attr.name);
+            } else if (_dnrUriAttributes.indexOf(name) >= 0) {
+                // strip whitespace/control chars that can disguise the scheme (e.g. "java\nscript:")
+                var val = (attr.value || '').replace(/[\u0000-\u0020]/g, '').toLowerCase();
+                if (val.indexOf('javascript:') === 0 || val.indexOf('vbscript:') === 0 ||
+                    (val.indexOf('data:') === 0 && val.indexOf('data:image/') !== 0)) {
+                    el.removeAttribute(attr.name);
+                }
+            }
+        }
+    }
+    return doc.body.innerHTML;
+}
+
+function secureSummernoteCodeview($el) {
+    if (!$el || !$el.length || $el.data('dnrCodeviewSecured')) return;
+    $el.data('dnrCodeviewSecured', true);
+
+    try {
+        var context = $el.data('summernote');
+        var codeview = context && context.modules && context.modules.codeview;
+        if (codeview) {
+            var origPurify = codeview.purify ? codeview.purify.bind(codeview) : null;
+            codeview.purify = function (value) {
+                return sanitizeReportHtml(origPurify ? origPurify(value) : value);
+            };
+        }
+    } catch (e) { /* render-side sanitizer remains the safety net */ }
+
+    $el.on('summernote.codeview.toggled', function () {
+        var $editor = $el.next('.note-editor');
+        if (!$editor.hasClass('codeview')) {
+            var code = $el.summernote('code');
+            var clean = sanitizeReportHtml(code);
+            if (clean !== code) $el.summernote('code', clean);
+        }
+    });
+}
+
+(function () {
+    if (!$.fn || typeof $.fn.summernote !== 'function' || $.fn.summernote.__dnrSecured) return;
+    var origSummernote = $.fn.summernote;
+
+    function enterInsertsLineBreak(e) {
+        if (e.shiftKey || e.ctrlKey || e.metaKey) return;
+
+        var sel = window.getSelection();
+        if (sel && sel.rangeCount) {
+            var node = sel.getRangeAt(0).startContainer;
+            if (node.nodeType === 3) node = node.parentNode;
+            if ($(node).closest('li').length) return;
+        }
+
+        e.preventDefault();
+        var inserted = false;
+        try { inserted = document.execCommand('insertLineBreak'); } catch (err) { inserted = false; }
+        if (!inserted) $(this).summernote('pasteHTML', '<br>');
+    }
+
+    var wrapped = function () {
+        var args = Array.prototype.slice.call(arguments);
+        if (args.length >= 2 && (args[0] === 'code' || args[0] === 'pasteHTML') && typeof args[1] === 'string') {
+            args[1] = sanitizeReportHtml(args[1]);
+        }
+        var isInit = args.length === 0 || $.isPlainObject(args[0]);
+
+        if (isInit) {
+            args[0] = $.extend({}, args[0]);
+            args[0].callbacks = $.extend({}, args[0].callbacks);
+            if (!args[0].callbacks.onEnter) args[0].callbacks.onEnter = enterInsertsLineBreak;
+        }
+        var result = origSummernote.apply(this, args);
+        if (isInit) {
+            this.each(function () { secureSummernoteCodeview($(this)); });
+        }
+        return result;
+    };
+
+    // Preserve any statics Summernote hung off the plugin function.
+    for (var k in origSummernote) {
+        if (Object.prototype.hasOwnProperty.call(origSummernote, k)) wrapped[k] = origSummernote[k];
+    }
+    wrapped.__dnrSecured = true;
+    $.fn.summernote = wrapped;
+})();
+
+ko.bindingHandlers.summernote = {
+    init: function (element, valueAccessor, allBindings) {
+        const observable = valueAccessor();
+
+        const options = {
+            height: 300,
+            popover: {
+                image: [
+                    ['image', ['resizeFull', 'resizeHalf', 'resizeQuarter', 'resizeNone']],
+                    ['float', ['floatLeft', 'floatRight', 'floatNone']],
+                    ['remove', ['removeMedia']]
+                ],
+                link: [
+                    ['link', ['linkDialogShow', 'unlink']]
+                ],
+                table: [
+                    ['add', ['addRowDown', 'addRowUp', 'addColLeft', 'addColRight']],
+                    ['delete', ['deleteRow', 'deleteCol', 'deleteTable']],
+                    ['color', ['bgcolor', 'tablefullwidth']]
+                ]
+            },
+            toolbar: [
+                ['style', ['style']],
+                ['font', ['bold', 'italic', 'underline', 'clear']],
+                ['fontname', ['fontname', 'fontsize']],
+                ['color', ['color']],
+                ['para', ['ul', 'ol', 'paragraph']],
+                ['table', ['table']],
+                ['insert', ['link', 'picture', 'hr']],
+                ['view', ['fullscreen', 'codeview']]
+            ],
+            dialogsInBody: false,
+            tableresize: true,
+            callbacks: {
+                onBlur: function () {
+                    if (ko.isObservable(observable)) {
+                        observable($(element).summernote('code'));
+                    }
+                }
+            }
+        };
+
+        $(element).summernote(options);
+
+        var _codeViewActive = false;
+        $(element).on('summernote.codeview.toggled', function () {
+            _codeViewActive = !_codeViewActive;
+            if (_codeViewActive) {
+                var $codable = $(element).next('.note-editor').find('.note-codable');
+                var html = $codable.val();
+                var cleaned = stripTableResizeArtifacts(html);
+                if (cleaned !== html) {
+                    $codable.val(cleaned);
+                }
+            }
+        });
+
+        const value = ko.unwrap(observable);
+        $(element).summernote('code', value || "");
+
+        if (ko.isObservable(observable)) {
+            observable.editor = $(element);
+        }
+
+        ko.utils.domNodeDisposal.addDisposeCallback(element, function () {
+            $(element).summernote('destroy');
+        });
+    },
+    update: function (element, valueAccessor) {
+        const value = ko.unwrap(valueAccessor());
+        if ($(element).summernote('code') !== value) {
+            $(element).summernote('code', value || "");
+        }
+    }
+};
+
+function redirectToReport(url, prm, newtab, multipart) {
+    prm = (typeof prm == 'undefined') ? {} : prm;
+    newtab = (typeof newtab == 'undefined') ? false : newtab;
+    multipart = (typeof multipart == 'undefined') ? true : multipart;
+    var form = document.createElement("form");
+    $(form).attr("id", "reg-form").attr("name", "reg-form").attr("action", url).attr("method", "post");
+    if (multipart) {
+        $(form).attr("enctype", "multipart/form-data");
+    }
+    if (newtab) {
+        $(form).attr("target", "_blank");
+    }
+    $.each(prm, function (key) {
+        $(form).append('<input type="text" name="' + key + '" value="' + escape(this) + '" />');
+    });
+    document.body.appendChild(form);
+    form.submit();
+    document.body.removeChild(form);
+
+    return false;
+}
+
+function htmlDecode(input) {
+    var e = document.createElement('div');
+    e.innerHTML = input;
+    return e.childNodes.length === 0 ? "" : e.childNodes[0].nodeValue;
+}
+
+function pagerViewModel(args) {
+    args = args || {};
+    var self = this;
+
+    self.pageSize = ko.observable(args.pageSize || 30);
+    self.pages = ko.observable(args.pages || 1);
+    self.currentPage = ko.observable(args.currentPage || 1);
+    self.pauseNavigation = ko.observable(false);
+    self.totalRecords = ko.observable(0);
+    self.autoPage = ko.observable(args.autoPage === true ? true : false);
+    self.pageSizeOptions = ko.observableArray([1, 10, 30, 50, 100, 150, 200, 500]);
+
+    self.sortColumn = ko.observable();
+    self.sortDescending = ko.observable();
+
+    self.isFirstPage = ko.computed(function () {
+        var self = this;
+        return self.currentPage() == 1;
+    }, self);
+
+    self.isLastPage = ko.computed(function () {
+        var self = this;
+        return self.currentPage() == self.pages();
+    }, self);
+
+    self.currentPage.subscribe(function (newValue) {
+        if (newValue > self.pages()) self.currentPage(self.pages() == 0 ? 1 : self.pages());
+        if (newValue < 1) self.currentPage(1);
+    });
+
+    self.previous = function () {
+        if (!self.pauseNavigation() && !self.isFirstPage() && !isNaN(self.currentPage())) self.currentPage(Number(self.currentPage()) - 1);
+    };
+
+    self.next = function () {
+        if (!self.pauseNavigation() && !self.isLastPage() && !isNaN(self.currentPage())) self.currentPage(Number(self.currentPage()) + 1);
+    };
+
+    self.first = function () {
+        if (!self.pauseNavigation()) self.currentPage(1);
+    };
+
+    self.last = function () {
+        if (!self.pauseNavigation()) self.currentPage(self.pages());
+    };
+
+    self.changeSort = function (sort) {
+        if (self.sortColumn() == sort) {
+            self.sortDescending(!self.sortDescending());
+        } else {
+            self.sortDescending(false);
+        }
+        self.sortColumn(sort);
+        if (self.currentPage() != 1) {
+            self.currentPage(1);
+        }
+    };
+
+    self.pageSize.subscribe(function () {
+        self.updatePages();
+        self.currentPage(1);
+    });
+
+    self.totalRecords.subscribe(function () {
+        self.updatePages();
+    });
+
+    self.updatePages = function () {
+        if (self.autoPage()) {
+            var pages = self.totalRecords() == self.pageSize() ? (self.totalRecords() / self.pageSize()) : (self.totalRecords() / self.pageSize()) + 1;
+            self.pages(Math.floor(pages));
+        }
+    };
+
+}
+
+// Access summary for a report, folder or dashboard row
+var accessBadges = function (item, root) {
+    var read = function () {
+        for (var i = 0; i < arguments.length; i++) {
+            if (item && item[arguments[i]] !== undefined) return ko.unwrap(item[arguments[i]]) || '';
+        }
+        return '';
+    };
+    var access = root && root.manageAccess ? root.manageAccess : null;
+    var nameOf = function (list, id) {
+        var items = list ? ko.unwrap(list) : null;
+        var match = _.find(items || [], function (x) { return ko.unwrap(x.value !== undefined ? x.value : x.id) == id; });
+        return match ? (ko.unwrap(match.text) || id) : id;
+    };
+    var names = function (value, list) {
+        return _.map(String(value).split(','), function (id) { return nameOf(list, id.trim()); }).join(', ');
+    };
+    var badges = [];
+    var add = function (icons, title, value, list, anyText) {
+        if (!value && !anyText) return;
+        badges.push({ icons: icons, title: title, text: value ? names(value, list) : anyText, restricted: !!value });
+    };
+    var users = access ? access.users : null, roles = access ? access.userRoles : null;
+    var clients = root ? root.clientIdOptions : null;
+    add('fa-user', 'Manage by User', read('UserId', 'userId'), users, 'Any User');
+    add('fa-lock fa-user', 'View only by User', read('ViewOnlyUserId', 'viewOnlyUserId'), users);
+    add('fa-trash fa-user', 'Delete by User', read('DeleteOnlyUserId', 'deleteOnlyUserId'), users);
+    add('fa-key', 'Manage by Role', read('UserRoles', 'userRole', 'userRoles'), roles, 'Any Role');
+    add('fa-lock fa-key', 'View only by Role', read('ViewOnlyUserRoles', 'viewOnlyUserRole', 'viewOnlyUserRoles'), roles);
+    add('fa-trash fa-key', 'Delete by Role', read('DeleteOnlyUserRoles', 'deleteOnlyUserRole', 'deleteOnlyUserRoles'), roles);
+    add('fa-building-o', root && root.clientIdLabelText ? ko.unwrap(root.clientIdLabelText) : 'Client Id', read('ClientId', 'clientId'), clients);
+    return badges;
+};
+
+var manageAccess = function (options) {
+    var buildList = function (array) { return _.map(array || [], function (x) { return { selected: ko.observable(false), value: ko.observable(x.id ? x.id : x), text: x.text ? x.text : x, category: x.category || null }; }) };
+    var access = {
+        clientId: ko.observable(),
+        clientIdToAdd: ko.observable(''),
+        users: ko.observableArray(buildList(options.users)),
+        userRoles: ko.observableArray(buildList(options.userRoles)),
+        viewOnlyUsers: ko.observableArray(buildList(options.users)),
+        viewOnlyUserRoles: ko.observableArray(buildList(options.userRoles)),
+        deleteOnlyUsers: ko.observableArray(buildList(options.users)),
+        deleteOnlyUserRoles: ko.observableArray(buildList(options.userRoles)),
+        showManageUsers: ko.observable(false),
+        showViewUsers: ko.observable(false),
+        showDeleteUsers: ko.observable(false),
+        showManageRoles: ko.observable(false),
+        showViewRoles: ko.observable(false),
+        showDeleteRoles: ko.observable(false),
+        toggleManageUsers: function () { this.showManageUsers(!this.showManageUsers()); },
+        toggleViewUsers: function () { this.showViewUsers(!this.showViewUsers()); },
+        toggleDeleteUsers: function () { this.showDeleteUsers(!this.showDeleteUsers()); },
+        toggleManageRoles: function () { this.showManageRoles(!this.showManageRoles()); },
+        toggleViewRoles: function () { this.showViewRoles(!this.showViewRoles()); },
+        toggleDeleteRoles: function () { this.showDeleteRoles(!this.showDeleteRoles()); },
+        selectedClientIds: function () {
+            var v = access.clientId();
+            return v ? String(v).split(',').map(function (x) { return x.trim(); }).filter(function (x) { return x.length; }) : [];
+        },
+        addClientId: function (id) {
+            if (!id) return;
+            var list = access.selectedClientIds();
+            if (list.indexOf(id) < 0) { list.push(id); access.clientId(list.join(',')); }
+            access.clientIdToAdd('');
+        },
+        removeClientId: function (id) {
+            access.clientId(access.selectedClientIds().filter(function (x) { return x !== id; }).join(','));
+        },
+        getAsList: function (x) {
+            var list = '';
+            _.forEach(x(), function (e) { if (e.selected()) list += (list ? ',' : '') + e.value(); });
+            return list;
+        },
+        setupList: function (x, value) {
+            _.forEach(x(), function (e) { e.selected(false); });
+
+            var valueArray = value ? value.split(',').filter(function(v) { return v.trim(); }) : [];
+
+            _.forEach(valueArray, function (id) {
+                var existingItem = _.find(x(), function (e) { return e.value() === id; });
+
+                if (existingItem) {
+                    existingItem.selected(true);
+                } else {
+                    var newItem = {
+                        selected: ko.observable(true),
+                        value: ko.observable(id),
+                        text: id,
+                        category: null
+                    };
+                    x.push(newItem);
+                }
+            });
+        },
+        matchAndSelect: function (items, ids) {
+            _.forEach(items(), function (item) {
+                if (ids.indexOf(item.value()) >= 0) {
+                    item.selected(true);
+                }
+            });
+        },
+        addMissingAndSelect: function (items, ids, category) {
+            _.forEach(items(), function (e) { e.selected(false); });
+            _.forEach(ids, function (id) {
+                var existingItem = _.find(items(), function (item) { return item.value() === id; });
+
+                if (!existingItem) {
+                    var newItem = {
+                        selected: ko.observable(true),
+                        value: ko.observable(id),
+                        text: id,
+                        category: category || null
+                    };
+                    items.push(newItem);
+                } else {
+                    existingItem.selected(true);
+                }
+            });
+        },
+        isDashboard: ko.observable(options.isDashboard == true ? true : false)
+    };
+
+    access.applyDefaultSettings = function () {
+        var userSettings = options.userSettings;
+        if (userSettings) {
+            access.clientId(options.userSettings.newReportClientId || options.userSettings.clientId);
+            var editUserIds = userSettings.newReportEditUserId ? userSettings.newReportEditUserId.split(',') : [];
+            var viewUserIds = userSettings.newReportViewUserId ? userSettings.newReportViewUserId.split(',') : [];
+            var editUserRoles = userSettings.newReportEditUserRoles ? userSettings.newReportEditUserRoles.split(',') : [];
+            var viewUserRoles = userSettings.newReportViewUserRoles ? userSettings.newReportViewUserRoles.split(',') : [];
+
+            var currentUserId = userSettings.currentUserId;
+            if (currentUserId && editUserIds.indexOf(currentUserId) === -1) {
+                editUserIds.push(currentUserId);
+            }
+
+            access.addMissingAndSelect(access.users, editUserIds);
+            access.addMissingAndSelect(access.deleteOnlyUsers, editUserIds);
+            access.addMissingAndSelect(access.userRoles, editUserRoles);
+            access.addMissingAndSelect(access.deleteOnlyUserRoles, editUserRoles);
+            access.addMissingAndSelect(access.viewOnlyUsers, viewUserIds);
+            access.addMissingAndSelect(access.viewOnlyUserRoles, viewUserRoles);
+        }
+    }
+
+    access.applyDefaultSettings();
+
+    access.groupedUsers = ko.computed(function () {
+        var hasCategory = access.users().some(function (u) { return u.category; });
+        if (!hasCategory) return [];
+
+        var groupedUsers = _.groupBy(access.users(), 'category');
+        return Object.keys(groupedUsers).map(function (cat) {
+            return {
+                category: cat || 'Uncategorized',
+                show: ko.observable(false),
+                users: ko.observableArray(groupedUsers[cat])
+            };
+        });
+    });
+
+    access.groupedViewOnlyUsers = ko.computed(function () {
+        var hasCategory = access.viewOnlyUsers().some(function (u) { return u.category; });
+        if (!hasCategory) return [];
+
+        var groupedViewOnlyUsers = _.groupBy(access.viewOnlyUsers(), 'category');
+        return Object.keys(groupedViewOnlyUsers).map(function (cat) {
+            return {
+                category: cat || 'Uncategorized',
+                show: ko.observable(false),
+                viewOnlyUsers: ko.observableArray(groupedViewOnlyUsers[cat])
+            };
+        });
+    });
+
+    access.groupedDeleteOnlyUsers = ko.computed(function () {
+        var hasCategory = access.deleteOnlyUsers().some(function (u) { return u.category; });
+        if (!hasCategory) return [];
+
+        var groupedDeleteOnlyUsers = _.groupBy(access.deleteOnlyUsers(), 'category');
+        return Object.keys(groupedDeleteOnlyUsers).map(function (cat) {
+            return {
+                category: cat || 'Uncategorized',
+                show: ko.observable(false),
+                deleteOnlyUsers: ko.observableArray(groupedDeleteOnlyUsers[cat])
+            };
+        });
+    });
+
+    return access;
+};
+
+function generateUniqueId() {
+    return Date.now().toString(36) + Math.random().toString(36).substr(2, 9);
+}
+function WidgetUniqueId(prefix) {
+    return prefix + '_' + Date.now().toString(36) + '_' + Math.random().toString(36).substr(2, 9);
+}
+
+function beautifySql(sql, htmlMode = true) {
+    sql = sql.replace("{FROM}", "FROM");
+    var _sql = sql;
+    try {
+        const keywords = [
+            'SELECT', 'FROM', 'WHERE', 'AND', 'OR', 'ORDER BY',
+            'GROUP BY', 'HAVING', 'LIMIT', 'OFFSET', 'ON',
+            'LEFT JOIN', 'RIGHT JOIN', 'INNER JOIN', 'OUTER JOIN',
+            'FULL OUTER JOIN', 'AS', 'DISTINCT', 'COUNT', 'SUM',
+            'AVG', 'MAX', 'MIN', 'CASE', 'WHEN', 'THEN', 'ELSE', 'END'
+        ];
+
+        if (htmlMode) {
+            // Add spaces around keywords
+            keywords.forEach(keyword => {
+                sql = sql.replace(new RegExp('\\b' + keyword + '\\b', 'gi'), '<span class="keyword">' + keyword + '</span>');
+            });
+        }
+
+        // Add line breaks after some keywords
+        sql = sql.replace(/(SELECT|FROM|WHERE|GROUP BY|ORDER BY|HAVING)/gi, (htmlMode ? '<br>$1' : '\n$1'));
+
+        // Indent nested queries
+        let indentation = 0;
+        sql = sql.replace(/\b(SELECT|FROM)\b/gi, (match, keyword) => {
+            if (keyword === 'SELECT') {
+                indentation++;
+            }
+            const indent = (htmlMode ? '&nbsp;' : ' ').repeat(indentation * 4);
+            return htmlMode ? '<br>' + indent + '<span class="keyword">' + match + '</span>' : '\n' + indent + match;
+        });
+        sql = sql.replace(/\b((LEFT|RIGHT|INNER|OUTER|FULL OUTER) JOIN|ON)\b/gi, (match, keyword) => {
+            if (keyword === 'ON') {
+                if (indentation > 1) indentation--;
+            }
+            const indent = (htmlMode ? '&nbsp;' : ' ').repeat(indentation * 4);
+            return htmlMode ? '<br>' + indent + '<span class="keyword">' + match + '</span>' : '\n' + indent + match;
+        });
+
+        // Put each field in SELECT on a separate line
+        sql = sql.replace(/SELECT([\s\S]*?)FROM/gi, (match, fields) => {
+            fields = fields.split(',').map(field => field.trim());
+            const indent = (htmlMode ? '&nbsp;' : ' ').repeat(indentation * 4 + 4);
+            return 'SELECT ' + fields.join((htmlMode ? ',<br>' : ',\n') + indent) + indent + (htmlMode ? '' : '\n') + 'FROM';
+        });
+
+        if (htmlMode) sql = sql.replaceAll('\\n', '<br>');
+        return sql.trim();
+    }
+    catch {
+        return _sql;
+    }
+}
+
+var textQuery = function (options) {
+    var self = this;
+    self.disabled = false;
+    self.queryItems = [];
+    self.filterItems = [];
+    self.filterField = null;
+    if (window.currentUserId) {
+        options.userId = window.currentUserId;
+    }
+    self.ParseQuery = function (token, text) {
+        return ajaxcall({
+            noBlocking: true,
+            url: options.apiUrl,
+            data: {
+                method: "/ReportApi/ParseQuery",
+                model: JSON.stringify({
+                    token: encodeURIComponent(token),
+                    text: encodeURIComponent(text),
+                    pageSize: 7
+                }),
+                userid: options.userId
+            }
+        });
+    }
+
+    self.QueryMethods = [
+        //{ value: 'Sum', key: '<span class="fa fa-flash"></span> Sum of', type: 'Function', searchKey: 'Sum of' },
+        //{ value: 'Avg', key: '<span class="fa fa-flash"></span> Average of', type: 'Function', searchKey: 'Average of' },
+        //{ value: 'Sum', key: '<span class="fa fa-flash"></span> Total of', type: 'Function', searchKey: 'Total of' },
+        //{ value: 'Count', key: '<span class="fa fa-flash"></span> Count of', type: 'Function', searchKey: 'Count of' },
+        //{ value: 'Percent', key: '<span class="fa fa-flash"></span> Percentage of', type: 'Function', searchKey: 'Percentage of' },
+        //{ value: 'OrderBy', key: '<span class="fa fa-gear"></span> Order by', type: 'Order', searchKey: 'Order By' },
+        //{ value: 'Bar', key: '<span class="fa fa-bar-chart"></span> as Bar Chart', type: 'ReportType', searchKey: 'as Bar Chart' },
+        //{ value: 'Pie', key: '<span class="fa fa-pie-chart"></span> as Pie Chart', type: 'ReportType', searchKey: 'as Pie Chart' },
+    ];
+
+    self.FilterMethods = [
+        //{ value: 'is', key: '<span class="fa fa-filter"></span> is', type: 'Filter', searchKey: 'is equal to' },
+        //{ value: 'is not', key: '<span class="fa fa-filter"></span> is not', type: 'Filter', searchKey: 'is not equal to' },
+    ];
+
+    self.DateFilterMethods = [
+        //{ value: 'Today', key: '<span class="fa fa-calendar"></span> for Today', operator: 'range', type: 'DateFilter', searchKey: 'for Today' },
+        //{ value: 'Yesterday', key: '<span class="fa fa-calendar"></span> for Yesterday', operator: 'range', type: 'DateFilter', searchKey: 'for Yesterday' },
+        //{ value: 'This Month', key: '<span class="fa fa-calendar"></span> for This Month', operator: 'range', type: 'DateFilter', searchKey: 'for This Month' },
+        //{ value: 'Last Month', key: '<span class="fa fa-calendar"></span> for Last Month', operator: 'range', type: 'DateFilter', searchKey: 'for Last Month' },
+        //{ value: 'This Year', key: '<span class="fa fa-calendar"></span> for This Year', operator: 'range', type: 'DateFilter', searchKey: 'for This Year' },
+        //{ value: 'Last Year', key: '<span class="fa fa-calendar"></span> for Last Year', operator: 'range', type: 'DateFilter', searchKey: 'for Last Year' },
+    ];
+
+    self.getAggregate = function (columnId) {
+        var func = 'Group';
+        _.forEach(self.queryItems, function (x, i) {
+            if (x.value == columnId) {
+                if (i > 0 && self.queryItems[i - 1].type == 'Function') {
+                    func = self.queryItems[i - 1].value;
+                }
+                return false;
+            }
+        });
+
+        return func;
+    }
+    self.getFilters = function (columnId) {
+        var filters = [];
+
+        _.forEach(self.queryItems, function (x, i) {
+            if (x.value == columnId && x.type === 'Field') {
+                if (i < self.queryItems.length - 1 && self.queryItems[i + 1].type === 'DateFilter') {
+                    var filter = self.queryItems[i + 1];
+                    filters.push(filter);
+                }
+            }
+        });
+
+        return filters;
+    };
+
+    self.getReportType = function () {
+        var reportType = _.find(self.queryItems, { type: 'ReportType' });
+        if (reportType) {
+            return reportType.value;
+        }
+
+        return (_.find(self.queryItems, { type: 'Function' })) ? 'Summary' : 'List';
+    }
+
+    self.resetQuery = function (searchReportFlag) {
+        self.queryItems = [];
+        self.filterItems = [];
+        if (searchReportFlag) {
+            document.getElementById("search-input").innerHTML = '';
+        } else {
+            document.getElementById("query-input").innerHTML = '';
+        }
+        
+    }
+
+    var tokenKey = 'token-key';
+    var token = JSON.parse(localStorage.getItem(tokenKey));
+
+    self.searchFields = {
+        selectedOption: ko.observable(),
+        url: options.apiUrl,
+        headers: { "Authorization": "Bearer " + token },
+        query: function (params) {
+            return params.term ? {
+                method: "/ReportApi/ParseQuery",
+                model: JSON.stringify({
+                    token: encodeURIComponent(params.term),
+                    text: ''
+                }),
+                userid: options.userId
+            } : null;
+        },
+        processResults: function (data) {
+            if (data.d) results = data.d;
+            var items = _.map(data, function (x) {
+                return { id: x.fieldId, text: x.tableDisplay + ' > ' + x.fieldDisplay, type: 'Field', dataType: x.fieldType, foreignKey: x.foreignKey, tableId: x.tableId };
+            });
+
+            return {
+                results: items
+            };
+        }
+    }
+
+    self.searchFunctions = {
+        selectedOption: ko.observable(),
+        url: options.apiUrl,
+        headers: { "Authorization": "Bearer " + token },
+        query: function (params) {
+            return params.term ? {
+                method: "/ReportApi/SearchFunction",
+                model: JSON.stringify({
+                    token: params.term,
+                    text: ''
+                })
+            } : null;
+        },
+        processResults: function (data) {
+            if (data.d) results = data.d;
+            var items = _.map(data, function (x) {
+                x.Parameters.forEach(function (p) {
+                    p.selectedField = ko.observable();
+                });
+                return { id: x.Id, text: x.DisplayName || x.Name, type: 'Field', description: x.Description, functionType: x.functionType, name: x.Name, parameters: x.Parameters || []};
+            });
+
+            return {
+                results: items
+            };
+        },
+        templateResult: function (item) {
+            if (!item.id) {
+                return item.text;
+            }
+
+            var $result = $(
+                '<div class="select2-result-repository clearfix">' +
+                '   <div class="select2-result-repository__meta">' +
+                '       <div class="select2-result-repository__title"><strong>' + item.text + '</strong></div>' +
+                '       <div class="select2-result-repository__description"><small style="font-size:smaller;">' + item.description + '</small></div>' +
+                '       <div class="select2-result-repository__description"><small style="font-size:smaller;">Parameters: ' + '</small></div>' +
+                '   </div>' +
+                '</div>'
+            );
+
+            if (item.parameters && item.parameters.length) {
+                var $parametersList = $('<ul style="font-size:smaller;"></ul>'); // Making the list small
+                item.parameters.forEach(function (param) {
+                    var requiredText = param.Required ? ' (Required)' : '';
+                    $parametersList.append('<li>' + param.DisplayName + ': ' + (param.Description || '') + requiredText + '</li>');
+                });
+                $result.append($parametersList); // Appending the list to the result
+            }
+
+            $result.append('</div></div>'); // Closing the main structure
+
+            return $result;
+        }
+    }
+
+    self.removeQueryItem = function (item) {
+        if (!item) return;
+        var i = self.queryItems.indexOf(item);
+        if (i < 0) i = _.findIndex(self.queryItems, { 'value': item.value });
+        if (i >= 0) self.queryItems.splice(i, 1);
+    }
+
+    self.addQueryItem = function (newItem, skipFilter) {
+        var match = _.find(self.queryItems, { 'value': newItem.value });
+        if (!match) {
+            self.queryItems.push(newItem);
+        }
+    }
+
+    self.usingFilter = function () {
+        // Check if the user has typed "where" or "for" and add filter methods
+        var textInput = document.getElementById("query-input");
+        var inputText = textInput.textContent.toLowerCase().trim();
+        var filterTexts = ['where ', 'when ', 'for ', 'is ', 'is not ', 'equal to ']
+        var containsFilter = false;
+
+        var containsFilter = _.some(filterTexts, function (filter) {
+            return _.includes(inputText, filter);
+        });
+
+        return containsFilter;
+    }
+
+    self.detectFilterTrigger = function (text) {
+        var triggers = ['where', 'when', 'for', 'is', 'is not', 'equal to', 'between', 'greater than', 'less than'];
+        return triggers.find(trigger => text.toLowerCase().includes(trigger));
+    };
+
+    self.getLastField = function () {
+        return _.findLast(self.queryItems, { type: 'Field' }) || null;
+    };
+
+    self.getTributeAttributes = function (options) {
+        options = options || { concatFilterAndQuery: true, wrapText: false };
+
+        var tributeAttributes = {
+            allowSpaces: true,
+            autocompleteMode: options.searchReportFlag == true ? false : true,
+            noMatchTemplate: "",
+            searchOpts: {
+                skip: true, // Disable the default matching
+                extract: function (el) {
+                    return el.searchKey; // Use stripped key for matching
+                }
+            },
+            values: function (token, callback) {
+                if (!token || !token.trim()) return;
+
+                if (options.searchLookupFilter === true) {
+                    self.SearchLookup(token, "").done(function (results) {
+                        if (results.d) results = results.d;
+                        var items = _.map(results, function (x) {
+                            return { value: x.id, key: x.text, text: x.text };
+                        });
+
+                        callback(items);
+                    });
+                    return;
+                }
+
+                if (token == "=" || token == ">" || token == "<") return;                
+                self.ParseQuery(token, "").done(function (results) {
+                    if (results.d) results = results.d;
+                    var items = _.map(results, function (x) {
+                        var item = { value: x.fieldId, key: x.tableDisplay + ' > ' + x.fieldDisplay, type: 'Field', dataType: x.fieldType, foreignKey: x.foreignKey, searchKey: x.tableDisplay + ' > ' + x.fieldDisplay };
+                        if (options.wrapText) {
+                            item.key = `{${item.key}}`;
+                        }
+                        return item;
+                    });
+                    if (options.concatFilterAndQuery) {
+                        var lastField = self.getLastField();
+                        if (self.detectFilterTrigger(token) && lastField != null) 
+                        {
+                            if (lastField.dataType == 'DateTime') {
+                                items = self.DateFilterMethods;
+                            }
+                        } else {
+                            items = items.concat(self.QueryMethods);
+                            items = items.concat(self.FilterMethods);
+                        }
+                    }                   
+                    callback(items);
+                });
+            },
+            selectTemplate: function (item) {
+                if (typeof item === "undefined") return null;
+                if (this.range.isContentEditable(this.current.element)) {
+                    return (
+                        '<span contenteditable="false"><a>' +
+                        item.original.key +
+                        "</a></span>"
+                    );
+                }
+
+                return item.original.value;
+            },
+            menuItemTemplate: function (item) {
+                return item.string;
+            }
+        };
+
+        return tributeAttributes;
+    }
+
+     self.patchTributeForSpaces = function (tribute) {
+        tribute.allowSpaces = true;
+        tribute._noMatch = false;
+
+        tribute.range.getLastWordInText = function (text) {
+            text = text.replace(/\u00A0/g, ' ');
+
+            if (tribute._noMatch) {
+                var gtIndex = text.lastIndexOf('>');
+                if (gtIndex !== -1) {
+                    var beforeGt = text.substring(0, gtIndex).replace(/\s+$/, '');
+                    var tableStart = beforeGt.search(/\S+\s*$/);
+                    if (tableStart === -1) tableStart = 0;
+                    var raw = text.substring(tableStart).trim();
+                    return raw.replace(/^[^\w]+/, '');
+                }
+                var words = text.split(' ');
+                var last = words[words.length - 1];
+                return last.replace(/^[^\w]+/, '').trim();
+            }
+
+            var segments = text.split(/  +/);
+            var last = segments[segments.length - 1].trim();
+            return last.replace(/^[^\w]+/, '');
+        };
+    }
+
+    self.setupHints = function () {
+        var hintInputs = Array.from(document.querySelectorAll(".hint-input"));
+        if (self._hintsTribute) {
+            hintInputs.forEach(function (el) {
+                try { self._hintsTribute.detach(el); } catch (e) {}
+                el.removeAttribute('data-tribute'); // detach uses setTimeout; clear synchronously
+            });
+            self._hintsTribute = null;
+        }
+
+        var tributeAttributes = self.getTributeAttributes({ concatFilterAndQuery: false, wrapText: true });
+        self._hintsTribute = new Tribute(tributeAttributes);
+        self.patchTributeForSpaces(self._hintsTribute);
+
+        hintInputs.forEach(function (inputElement) {
+            inputElement.removeAttribute('data-tribute'); // guard against any lingering attribute
+            inputElement._currentTribute = self._hintsTribute;
+            self._hintsTribute.attach(inputElement);
+
+            if (!inputElement._tributeEventsAdded) {
+                inputElement._tributeEventsAdded = true;
+
+                inputElement.addEventListener('tribute-no-match', function () {
+                    if (inputElement._currentTribute) inputElement._currentTribute._noMatch = true;
+                });
+
+                inputElement.addEventListener("tribute-replaced", function (e) {
+                    if (inputElement._currentTribute) inputElement._currentTribute._noMatch = false;
+                    self.addQueryItem(e.detail.item.original, true);
+                });
+
+                inputElement.addEventListener("menuItemRemoved", function (e) {
+                    self.removeQueryItem(e.detail.item.original);
+                });
+
+                inputElement.addEventListener('keydown', function (e) {
+                    if (e.ctrlKey && e.keyCode === 32) {
+                        var t = inputElement._currentTribute;
+                        if (!t) return;
+                        e.preventDefault();
+                        t._noMatch = true;
+                        inputElement.dispatchEvent(new Event('input', { bubbles: true }));
+                    }
+                });
+            }
+        });
+
+    }
+    
+    self.setupQuery = function () {
+        var inputEl = document.getElementById("query-input");
+        if (!inputEl) return;
+
+        self.resetQuery();
+        inputEl.innerText = "";
+
+        if (inputEl.tribute) {
+            return;
+        }
+
+        var tributeAttributes = self.getTributeAttributes({ concatFilterAndQuery: true });
+        var tribute = new Tribute(tributeAttributes);
+        self.patchTributeForSpaces(tribute);
+        tribute.attach(inputEl);
+
+        inputEl.addEventListener("tribute-replaced", function (e) {
+            self.addQueryItem(e.detail.item.original);
+        });
+
+        inputEl.addEventListener("menuItemRemoved", function (e) {
+            self.removeQueryItem(e.detail.item.original);
+        });
+    };
+
+
+    self.setupSearch = function () {
+        var tributeAttributes = self.getTributeAttributes({ searchReportFlag: true });
+        var tribute = new Tribute(tributeAttributes);
+        var searchInput = document.getElementById('search-input');
+
+        if (searchInput) {
+            tribute.attach(searchInput);
+
+            searchInput.addEventListener("tribute-replaced", function (e) {
+                    self.addQueryItem(e.detail.item.original);
+                });
+
+            searchInput.addEventListener("menuItemRemoved", function (e) {
+                    self.removeQueryItem(e.detail.item.original);
+                });
+
+            searchInput.addEventListener('blur', function () {
+                const vm = ko.dataFor(searchInput);
+                if (vm && typeof vm.searchForReports === 'function') {
+                    vm.searchForReports();
+                }
+            });
+
+            searchInput.addEventListener('keydown', function (e) {
+                if (e.key === 'Enter') {
+                    e.preventDefault(); 
+                    searchInput.blur();
+                }
+            });
+
+        }
+    }
+
+    self.lookupSqlPrms = {};
+    self.searchValues = [];
+    self.initLookupQuery = function (field) {
+        return ajaxcall({
+            url: options.apiUrl,
+            data: {
+                method: "/ReportApi/GetLookupList",
+                model: JSON.stringify({ fieldId: field.fieldId, addToken: true })
+            }
+        }).done(function (result) {
+            if (result.d) { result = result.d; }
+            if (result.result) { result = result.result; }
+            self.lookupSqlPrms = {
+                lookupSql: result.sql,
+                connectKey: result.connectKey
+            };
+        });
+    }
+
+    self.SearchLookup = function (token, text) {
+        return ajaxcall({
+            type: 'POST',
+            noBlocking: true,
+            url: options.lookupListUrl,
+            data: JSON.stringify({
+                lookupSql: self.lookupSqlPrms.lookupSql,
+                connectKey: self.lookupSqlPrms.connectKey,
+                token: encodeURIComponent(token),
+            })
+        });
+    }
+
+    self._lookupTributes = self._lookupTributes || {};
+    self._lookupOperatorSubs = self._lookupOperatorSubs || {};
+
+    self.setupLookup = function (field, filter) {
+        var candidateIds = [filter && filter.uiId, field && field.uiId].filter(function (x) { return !!x; });
+        var uiId = candidateIds[0];
+        var isMultiValue = function (op) { return op === 'in' || op === 'not in'; };
+        var prefixes = ['C', 'F', 'M', 'P'];
+        var filterInputs = [];
+        candidateIds.forEach(function (id) {
+            prefixes.forEach(function (p) {
+                document.querySelectorAll('[id="ctl-' + p + '-' + id + '"]').forEach(function (el) {
+                    if (filterInputs.indexOf(el) < 0) filterInputs.push(el);
+                });
+            });
+        });
+
+        filterInputs.forEach(function (el) {
+            var existing = el._currentTribute || self._lookupTributes[uiId];
+            if (existing) {
+                try { existing.detach(el); } catch (e) { }
+                el.removeAttribute('data-tribute');
+                el._currentTribute = null;
+            }
+        });
+        delete self._lookupTributes[uiId];
+
+        if (filterInputs.length > 0) {
+            var tributeAttributes = self.getTributeAttributes({ searchLookupFilter: true });
+            var tribute = new Tribute(tributeAttributes);
+            self.patchTributeForSpaces(tribute);
+            self._lookupTributes[uiId] = tribute;
+
+            tribute.attach(filterInputs);
+
+            // initLookupQuery is per-field, not per-element — call it once.
+            self.initLookupQuery(field);
+
+            // Switching between a single value and a list operator must not carry the old picks over.
+            if (self._lookupOperatorSubs[uiId]) {
+                self._lookupOperatorSubs[uiId].dispose();
+                delete self._lookupOperatorSubs[uiId];
+            }
+            if (filter && ko.isObservable(filter.Operator)) {
+                var previousOperator = filter.Operator();
+                self._lookupOperatorSubs[uiId] = filter.Operator.subscribe(function (newOperator) {
+                    var wasMulti = isMultiValue(previousOperator);
+                    previousOperator = newOperator;
+                    if (wasMulti === isMultiValue(newOperator)) return;
+                    self.queryItems = [];
+                    filterInputs.forEach(function (el) { el.value = ''; });
+                    if (ko.isObservable(filter.Value)) filter.Value('');
+                    if (ko.isObservable(filter.ValueIn)) filter.ValueIn([]);
+                });
+            }
+
+            filterInputs.forEach(function (filterInput) {
+                // Always keep current references on the element so the single set of listeners
+                // (added only once via _tributeEventsAdded) uses up-to-date instances when
+                // the data operation changes.
+                filterInput._lookupFilter = filter;
+                filterInput._currentTribute = tribute;
+                filterInput._currentQuery = self;
+
+                if (!filterInput._tributeEventsAdded) {
+                    filterInput._tributeEventsAdded = true;
+
+                    filterInput.addEventListener('tribute-no-match', function () {
+                        if (filterInput._currentTribute) filterInput._currentTribute._noMatch = true;
+                    });
+
+                    // NOTE: tribute-active-true intentionally not handled — see setupHints
+                    // for full explanation of the race condition it causes.
+
+                    filterInput.addEventListener("tribute-replaced", function (e) {
+                        if (filterInput._currentTribute) filterInput._currentTribute._noMatch = false;
+                        var f = filterInput._lookupFilter;
+                        var multi = f && ko.isObservable(f.Operator) && isMultiValue(f.Operator());
+                        if (f && ko.isObservable(f.Operator) && !multi) {
+                            filterInput._currentQuery.queryItems = [];
+                        }
+                        filterInput._currentQuery.addQueryItem(e.detail.item.original);
+                        if (multi) {
+                            var items = filterInput._currentQuery.queryItems.map(function (x) { return x.text; });
+                            f.Value(items.join(', '));
+                            f.ValueIn(items);
+                            filterInput.value = items.join(', ') + ', ';
+                        }
+                    });
+
+                    filterInput.addEventListener("menuItemRemoved", function (e) {
+                        filterInput._currentQuery.removeQueryItem(e.detail.item.original);
+                    });
+
+                    filterInput.addEventListener('blur', function () {
+                        var f = filterInput._lookupFilter;
+                        var q = filterInput._currentQuery;
+                        if (f && q.queryItems.length > 0) {
+                            var items = q.queryItems.map(x => x.text);
+                            if (isMultiValue(f.Operator())) {
+                                f.Value(items.join(', '));
+                                f.ValueIn(items);
+                            } else {
+                                f.Value(items[items.length - 1]);
+                            }
+                        }
+                    });
+
+                    filterInput.addEventListener("input", function () {
+                        if (!filterInput.value.trim()) {
+                            filterInput._currentQuery.queryItems = [];
+                            var f = filterInput._lookupFilter;
+                            if (f) f.Value("");
+                        }
+                    });
+
+                    filterInput.addEventListener('keydown', function (e) {
+                        if (e.key === 'Enter') {
+                            e.preventDefault();
+                            filterInput.blur();
+                        }
+                        // Ctrl+Space: re-trigger search for the word at cursor.
+                        if (e.ctrlKey && e.keyCode === 32) {
+                            var t = filterInput._currentTribute;
+                            if (!t) return;
+                            e.preventDefault();
+                            t._noMatch = true;
+                            filterInput.dispatchEvent(new Event('input', { bubbles: true }));
+                        }
+                    });
+                }
+            });
+        }
+    }
+}
+
+window.toastr = (function () {
+    const containerId = 'toast-container-bs5';
+    let container = document.getElementById(containerId);
+
+    if (!container) {
+        container = document.createElement('div');
+        container.id = containerId;
+        container.className = 'position-fixed top-0 end-0 p-3';
+        container.style.zIndex = 1055;
+        document.body.appendChild(container);
+    }
+
+    function show(message, type) {
+        const alert = document.createElement('div');
+        alert.className = `alert alert-${type} alert-dismissible fade show mb-2`;
+        alert.role = 'alert';
+        alert.innerHTML = `
+            ${message}
+            <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
+        `;
+
+        container.appendChild(alert);
+
+        // Auto-dismiss after 3 seconds
+        setTimeout(() => {
+            alert.classList.remove('show');
+            alert.classList.add('hide');
+            setTimeout(() => alert.remove(), 300); // let fade out finish
+        }, 3000);
+    }
+
+    return {
+        success: (msg) => show(msg, 'success'),
+        error: (msg) => show(msg, 'danger'),
+        info: (msg) => show(msg, 'info'),
+        warning: (msg) => show(msg, 'warning')
+    };
+})();
+
+$.extend($.summernote.plugins, {
+    'bgcolor': function (context) {
+        var ui = $.summernote.ui;
+        var $editor = context.layoutInfo.editor;
+        var $editable = context.layoutInfo.editable;
+
+        context.memo('button.bgcolor', function () {
+            return ui.buttonGroup([
+                ui.button({
+                    contents: '<i class="fa fa-paint-brush"></i>',
+                    tooltip: 'Cell Background Color',
+                    click: function () {
+                        var colorInput = $('<input type="color">');
+                        colorInput.on('input', function () {
+                            var color = $(this).val();
+                            var rng = context.invoke('editor.createRange');
+                            if (rng.isCollapsed()) {
+                                var td = $(rng.sc).closest('td,th');
+                                if (td.length) {
+                                    td.css('background-color', color);
+                                }
+                                context.triggerEvent('change', $editable.html(), $editable);
+                            }
+                        });
+                        colorInput.trigger('click');
+                    }
+                })
+            ]).render();
+        });
+    }
+});
+
+$.extend($.summernote.plugins, {
+    'tableresize': function (context) {
+        var $editable = context.layoutInfo.editable;
+
+        if (!document.getElementById('dnr-tableresize-style')) {
+            var st = document.createElement('style');
+            st.id = 'dnr-tableresize-style';
+            st.textContent = '.note-editable .dnr-resize-anchor{position:relative;}';
+            document.head.appendChild(st);
+        }
+
+        function makeResizable(table) {
+            $(table).addClass('dnr-resize-anchor');
+
+            $(table).find('th, td').each(function () {
+                var $cell = $(this);
+
+                if (!$cell.find('.resize-col').length) {
+                    var $colHandle = $('<div class="resize-col"></div>').css({
+                        position: 'absolute',
+                        right: 0,
+                        top: 0,
+                        width: '5px',
+                        cursor: 'col-resize',
+                        userSelect: 'none',
+                        height: '100%'
+                    });
+                    $cell.addClass('dnr-resize-anchor').append($colHandle);
+
+                    $colHandle.on('mousedown', function (e) {
+                        e.preventDefault();
+                        var startX = e.pageX;
+                        var startWidth = $cell.outerWidth();
+
+                        $(document).on('mousemove.colresize', function (e) {
+                            var newWidth = startWidth + (e.pageX - startX);
+                            $cell.css('width', newWidth + 'px');
+                        });
+
+                        $(document).on('mouseup.colresize', function () {
+                            $(document).off('.colresize');
+                            context.triggerEvent('change', $editable.html(), $editable);
+                        });
+                    });
+                }
+
+                if (!$cell.find('.resize-row').length) {
+                    var $rowHandle = $('<div class="resize-row"></div>').css({
+                        position: 'absolute',
+                        bottom: 0,
+                        left: 0,
+                        height: '5px',
+                        cursor: 'row-resize',
+                        userSelect: 'none',
+                        width: '100%'
+                    });
+                    $cell.append($rowHandle);
+
+                    $rowHandle.on('mousedown', function (e) {
+                        e.preventDefault();
+                        var startY = e.pageY;
+                        var startHeight = $cell.outerHeight();
+
+                        $(document).on('mousemove.rowresize', function (e) {
+                            var newHeight = startHeight + (e.pageY - startY);
+                            $cell.css('height', newHeight + 'px');
+                        });
+
+                        $(document).on('mouseup.rowresize', function () {
+                            $(document).off('.rowresize');
+                            context.triggerEvent('change', $editable.html(), $editable);
+                        });
+                    });
+                }
+            });
+
+            if (!$(table).find('.resize-corner').length) {
+                var $cornerHandle = $('<div class="resize-corner"></div>').css({
+                    position: 'absolute',
+                    right: 0,
+                    bottom: 0,
+                    width: '10px',
+                    height: '10px',
+                    cursor: 'nwse-resize',
+                    background: 'rgba(0,0,0,0.2)'
+                });
+                $(table).append($cornerHandle);
+
+                $cornerHandle.on('mousedown', function (e) {
+                    e.preventDefault();
+                    var startX = e.pageX, startY = e.pageY;
+                    var startWidth = $(table).outerWidth();
+                    var startHeight = $(table).outerHeight();
+
+                    $(document).on('mousemove.tableresize', function (e) {
+                        var newWidth = startWidth + (e.pageX - startX);
+                        var newHeight = startHeight + (e.pageY - startY);
+                        $(table).css({
+                            width: newWidth + 'px',
+                            height: newHeight + 'px'
+                        });
+                    });
+
+                    $(document).on('mouseup.tableresize', function () {
+                        $(document).off('.tableresize');
+                        context.triggerEvent('change', $editable.html(), $editable);
+                    });
+                });
+            }
+        }
+
+        // hook into editor events
+        $editable.on('mousedown', 'table', function () {
+            makeResizable(this);
+        });
+
+        context.events = {
+            'summernote.init': function () {
+                $editable.find('table').each(function () {
+                    makeResizable(this);
+                });
+            }
+        };
+    }
+});
+$.extend($.summernote.plugins, {
+    'tablefullwidth': function (context) {
+        var ui = $.summernote.ui;
+        var $editable = context.layoutInfo.editable;
+
+        context.memo('button.tablefullwidth', function () {
+            return ui.button({
+                contents: '<i class="fa fa-arrows-h"></i>',
+                tooltip: 'Set Table Width 100%',
+                click: function () {
+                    var rng = context.invoke('editor.createRange');
+                    var $table = null;
+
+                    if (rng && rng.sc) {
+                        $table = $(rng.sc).closest('table');
+                    }
+
+                    if (!$table || !$table.length) {
+                        $table = $(rng.ec).closest('table');
+                    }
+
+                    if ($table && $table.length) {
+                        $table.css({
+                            width: '100%',
+                            tableLayout: 'auto'
+                        });
+                        context.triggerEvent('change', $editable.html(), $editable);
+                    }
+                }
+            }).render();
+        });
+    }
+});

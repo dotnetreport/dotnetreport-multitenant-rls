@@ -9,3 +9,7 @@ bin/
 obj/
 *.user
 .vs/
+
+# Demo app: npm packages and the gulp-built client libraries (run npm install && npx gulp scripts)
+node_modules/
+MultiTenantDemo/wwwroot/lib/

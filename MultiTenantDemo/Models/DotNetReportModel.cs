@@ -1,0 +1,7308 @@
+﻿using DocumentFormat.OpenXml;
+using DocumentFormat.OpenXml.Packaging;
+using DocumentFormat.OpenXml.Wordprocessing;
+using HtmlAgilityPack;
+using Microsoft.CodeAnalysis;
+using Microsoft.Extensions.Caching.Memory;
+using Microsoft.Data.SqlClient;
+using Newtonsoft.Json;
+using Newtonsoft.Json.Linq;
+using OfficeOpenXml;
+using PdfSharp.Drawing;
+using PdfSharp.Drawing.Layout;
+using PdfSharp.Pdf;
+using PdfSharp.Pdf.IO;
+using PuppeteerSharp;
+using PuppeteerSharp.Media;
+using System.Collections.Concurrent;
+using System.Data;
+using System.Drawing;
+using System.Net;
+using System.Security.Cryptography;
+using System.Text;
+using System.Text.RegularExpressions;
+using System.Web;
+using A = DocumentFormat.OpenXml.Drawing;
+using DW = DocumentFormat.OpenXml.Drawing.Wordprocessing;
+using PIC = DocumentFormat.OpenXml.Drawing.Pictures;
+
+namespace ReportBuilder.Web.Models
+{
+    public class DotNetReportModel
+    {
+        public int ReportId { get; set; }
+        public string ReportName { get; set; }
+        public string ReportDescription { get; set; }
+        public string ReportSql { get; set; }
+
+        public bool IncludeSubTotals { get; set; }
+        public bool ShowUniqueRecords { get; set; }
+        public string ReportFilter { get; set; }
+        public string ReportType { get; set; }
+        public bool ShowDataWithGraph { get; set; }
+
+        public string ConnectKey { get; set; }
+
+        public string ChartData { get; set; }
+        public bool IsDashboard { get; set; }
+        public int SelectedFolder { get; set; }
+
+        public string ReportSeries { get; set; }
+        public bool ExpandAll { get; set; }
+        public string ReportData { get; set; }
+    }
+
+    public class DotNetReportScheduleModel : DotNetReportModel
+    {
+        public List<ReportHeaderColumn> Columns { get; set; } = new List<ReportHeaderColumn>();
+        // Per-report header selection (ReportSettings carries ReportHeaderId / UseCustomReportHeader /
+        // CustomReportHeaderHtml); HideReportHeader means "don't use a header for this report".
+        public string ReportSettings { get; set; }
+        public bool HideReportHeader { get; set; }
+        public bool HideReportFooter { get; set; }
+    }
+
+    public class DotNetReportPrintModel : DotNetReportModel
+    {
+        public string ClientId { get; set; }
+        public string UserId { get; set; }
+        public string CurrentUserRoles { get; set; }
+        public string DataFilters { get; set; }
+        public string ReportData { get; set; }
+    }
+
+    public class DotNetReportResultModel
+    {
+        public string ReportSql { get; set; }
+        public DotNetReportDataModel ReportData { get; set; }
+        public DotNetReportPagerModel Pager { get; set; }
+
+        public bool HasError { get; set; }
+        public string Exception { get; set; }
+        public string Warnings { get; set; }
+
+        public bool ReportDebug { get; set; }
+    }
+
+    public class DotNetReportPagerModel
+    {
+        public int CurrentPage { get; set; }
+        public int TotalRecords { get; set; }
+        public int PageSize { get; set; }
+        public int TotalPages { get; set; }
+    }
+
+    public class DotNetReportDataColumnModel
+    {
+        public string SqlField { get; set; }
+        public string ColumnName { get; set; }
+        public string DataType { get; set; }
+        public bool IsNumeric { get; set; }
+        public string FormatType { get; set; }
+        public bool IsPivotField { get; set; }
+    }
+
+    public class DotNetReportDataRowItemModel
+    {
+        public string Value { get; set; }
+        public string FormattedValue { get; set; }
+        public string LabelValue { get; set; }
+        public double? NumericValue { get; set; }
+        public DotNetReportDataColumnModel Column { get; set; }
+    }
+
+    public class DotNetReportDataRowModel
+    {
+        public DotNetReportDataRowItemModel[] Items { get; set; }
+    }
+
+    public class DotNetReportDataModel
+    {
+        public List<DotNetReportDataRowModel> Rows { get; set; }
+        public List<DotNetReportDataColumnModel> Columns { get; set; }
+    }
+
+    public class SqlQuery
+    {
+        public string sql { get; set; } = "";
+        public List<KeyValuePair<string, string>> parameters { get; set; } = null;
+        public int reportId { get; set; }
+        public string dbType { get; set; } = "";
+    }
+
+    public class TableViewModel
+    {
+        public int Id { get; set; }
+        public string SchemaName { get; set; }
+        public string TableName { get; set; }
+        public string DisplayName { get; set; }
+        public bool Selected { get; set; }
+        public bool IsView { get; set; }
+        public int DisplayOrder { get; set; }
+        public string AccountIdField { get; set; }
+
+        public List<ColumnViewModel> Columns { get; set; } = new List<ColumnViewModel>();
+
+        public DataTable dataTable { get; set; }
+        public List<ParameterViewModel> Parameters { get; set; } = new List<ParameterViewModel>();
+        public List<string> AllowedRoles { get; set; } = new List<string>();
+        public bool? DoNotDisplay { get; set; } = false;
+
+        public bool CustomTable { get; set; }
+        public string CustomTableSql { get; set; }
+        public List<CategoryViewModel> Categories { get; set; } = new List<CategoryViewModel>();
+        public bool DynamicColumns { get; set; }
+        public string DynamicColumnTranslation { get; set; }
+        public int? DynamicValuesTableId { get; set; }
+    }
+    public class CategoryViewModel
+    {
+        public int Id { get; set; }
+        public string Name { get; set; }
+        public string Description { get; set; }
+    }
+
+    public class ParameterViewModel
+    {
+        public int Id { get; set; }
+        public string ParameterName { get; set; }
+        public string DisplayName { get; set; }
+        public string ParameterValue { get; set; }
+        public string ParameterDataTypeString { get; set; }
+        public Type ParameterDataTypeCLR { get; set; }
+        public string ParamterDataTypeOleDbType { get; set; } = "VarChar";
+        public int ParamterDataTypeOleDbTypeInteger { get; set; } = 0;
+        public bool Required { get; set; }
+        public bool ForeignKey { get; set; }
+        public string ForeignTable { get; set; }
+        public string ForeignJoin { get; set; }
+        public string ForeignKeyField { get; set; }
+        public string ForeignValueField { get; set; }
+        public bool Hidden { get; set; }
+    }
+
+    public class RelationModel
+    {
+        public int Id { get; set; }
+        public int TableId { get; set; }
+        public int JoinedTableId { get; set; }
+        public string JoinType { get; set; }
+        public string FieldName { get; set; }
+        public string JoinFieldName { get; set; }
+        public int JoinOrder { get; set; }
+    }
+
+
+    public class CustomFunctionModel
+    {
+        public int Id { get; set; }
+        public string Name { get; set; } = "";
+        public string DisplayName { get; set; } = "";
+        public string Description { get; set; } = "";
+        public int DataConnectionId { get; set; } 
+        public int DisplayOrder { get; set; } 
+
+        public string FunctionType { get; set; } = "";
+        public string References { get; set; } = "";
+        public string ResultDataType { get; set; } = "";
+        public string Code { get; set; } = "";
+        public List<CustomFunctionParameterModel> Parameters { get; set; } = new List<CustomFunctionParameterModel>();
+        public List<string> AllowedRoles { get; set; } = new List<string>();
+    }
+
+    public class CustomFunctionParameterModel
+    {
+        public int Id { get; set; }
+        public int CustomFunctionId { get; set; }
+        public string ParameterName { get; set; } = "";
+        public string DisplayName { get; set; } = "";
+  
+        public string Description { get; set; } = "";
+
+        public bool Required { get; set; }
+        public string DefaultValue { get; set; } = "";
+        public string DataType { get; set; } = "object";
+    }
+
+
+    public enum FieldTypes
+    {
+        Boolean,
+        DateTime,
+        Varchar,
+        Money,
+        Int,
+        Double
+    }
+
+    public enum JoinTypes
+    {
+        Inner,
+        Left,
+        Right
+    }
+
+    public enum DbTypes
+    {
+        MS_SQL,
+        MySql,
+        PostgreSQL,
+        Oracle,
+        Informix,
+        OleDb
+    }
+    public static class ReportConstants
+    {
+        public const string SubReportValueToken = "@@SUBVAL@@";
+    }
+    public static class DbTypesExtensions
+    {
+        public static string ToDbString(this DbTypes db)
+        {
+            return db.ToString().Replace("_", " ");
+        }
+    }
+
+
+    public class ColumnViewModel
+    {
+        public int Id { get; set; }
+        public string ColumnName { get; set; }
+        public string DisplayName { get; set; }
+        public bool Selected { get; set; }
+        public int DisplayOrder { get; set; }
+        public string FieldType { get; set; }
+        public bool PrimaryKey { get; set; }
+        public bool ForeignKey { get; set; }
+        public bool AccountIdField { get; set; }
+        public string ForeignTable { get; set; }
+        public string ForeignJoin { get; set; } = "Inner";
+        public string ForeignKeyField { get; set; }
+        public string ForeignValueField { get; set; }
+        public bool DoNotDisplay { get; set; } = false;
+        public bool ForceFilter { get; set; }
+        public bool ForceFilterForTable { get; set; }
+        public string RestrictedDateRange { get; set; }
+        public DateTime? RestrictedStartDate { get; set; }
+        public DateTime? RestrictedEndDate { get; set; }
+        public List<string> AllowedRoles { get; set; } = new List<string>();
+        public bool ForeignParentKey { get; set; }
+        public string ForeignParentTable { get; set; }
+        public string ForeignParentApplyTo { get; set; }
+        public string ForeignParentKeyField { get; set; }
+        public string ForeignParentValueField { get; set; }
+        public bool ForeignParentRequired { get; set; }
+        public string JsonStructure { get; set; }
+        public bool ForeignFilterOnly { get; set; }
+    }
+
+    public class ConnectViewModel
+    {
+        public string Provider { get; set; }
+        public string ServerName { get; set; }
+        public string InitialCatalog { get; set; }
+        public string UserName { get; set; }
+        public string Password { get; set; }
+        public bool IntegratedSecurity { get; set; }
+        public string ApiUrl { get; set; }
+        public string AccountApiKey { get; set; }
+        public string DatabaseApiKey { get; set; }
+    }
+
+    public class ManageViewModel
+    {
+        public string ApiUrl { get; set; }
+        public string AccountApiKey { get; set; }
+        public string DatabaseApiKey { get; set; }
+
+        public List<TableViewModel> Tables { get; set; }
+        public List<TableViewModel> Procedures { get; set; }
+        public List<CustomFunctionModel> Functions { get; set; }
+
+        public dynamic DbConfig { get; set; }
+        public UserRolesConfig UserAndRolesConfig { get; set; }
+        public string CurrentUserId { get; set; }
+
+    }
+    public class UserRolesConfig
+    {
+        public bool RequireLogin { get; set; }
+        public bool UsersSource { get; set; }
+        public bool UserRolesSource { get; set; }
+        public string SelectedUserConfig { get; set; }
+    }
+    public class DotNetReportApiCall
+    {
+        public string Method { get; set; }
+        public bool SaveReport { get; set; }
+        public string ReportJson { get; set; }
+        public bool adminMode { get; set; }
+        public bool SubTotalMode { get; set; }
+        public string? userId { get; set; }
+        public string? query { get; set; } = "";
+        public string? fieldIds { get; set; } = "";
+        public string? BypassDataFiltersToUpdate { get; set; } = "";
+    }
+
+    public class DotNetDasboardReportModel : DotNetReportModel
+    {
+        public int X { get; set; }
+        public int Y { get; set; }
+        public int Width { get; set; }
+        public int Height { get; set; }
+        public bool IsWidget { get; set; }
+        public string WidgetSettings { get; set; }    
+    }
+
+    public class DotNetDashboardModel
+    {
+        public List<dynamic> Dashboards { get; set; }
+        public List<DotNetDasboardReportModel> Reports { get; set; }
+    }
+
+    public class DotNetReportSettings
+    {
+        /// <summary>
+        /// dotnet Report Service Api Url
+        /// </summary>
+        public string ApiUrl { get; set; }
+
+        /// <summary>
+        /// Your dotnet Report Account Key
+        /// </summary>
+        public string AccountApiToken { get; set; }
+
+        /// <summary>
+        /// Your dotnet Report Data Connection Key
+        /// </summary>
+        public string DataConnectApiToken { get; set; }
+
+        /// <summary>
+        /// Current Client Id if using Multi-tenant
+        /// </summary>
+        public string ClientId { get; set; }
+
+        /// <summary>
+        /// Current User Id if using Authentication
+        /// </summary>
+        public string UserId { get; set; }
+
+        /// <summary>
+        /// If you want to use user id for schedule but not for authentication, use this property
+        /// </summary>
+        public string UserIdForSchedule { get; set; }
+
+
+        /// <summary>
+        /// If you want to use user id for filter but not for authentication, use this property
+        /// </summary>
+        public string UserIdForFilter { get; set; }
+
+        /// <summary>
+        /// Current User name to display
+        /// </summary>
+        public string UserName { get; set; }
+
+        /// <summary>
+        /// List of Current User's Roles if using Authentication
+        /// </summary>
+        public List<string> CurrentUserRole { get; set; } = new List<string>();
+
+        /// <summary>
+        /// List of all User Ids in your Application
+        /// </summary>
+        public List<dynamic> Users { get; set; } = new List<dynamic>();
+
+        /// <summary>
+        /// List of all User Roles in your Application
+        /// </summary>
+        public List<string> UserRoles { get; set; } = new List<string>();
+
+        /// <summary>
+        /// List of all Client (Tenant) Ids in your Application, used to pick from when restricting
+        /// access to Reports, Folders and Dashboards
+        /// </summary>
+        public List<string> ClientIds { get; set; } = new List<string>();
+
+        /// <summary>
+        /// A list of Global Data filters using format { Column1: 'val1, val2, ...', Column2: '1,2,3,...', ...}
+        /// </summary>
+        public dynamic DataFilters { get; set; }
+
+        /// <summary>
+        /// Set true if the current user can enter Admin Mode
+        /// </summary>
+        public bool CanUseAdminMode { get; set; }
+    }
+
+    public class ReportHeaderColumn
+    {
+        public string fieldName { get; set; }
+        public string fieldLabel { get; set; }
+        public string fieldLabel2 { get; set; }
+        public bool hideStoredProcColumn { get; set; }
+        public int? decimalPlacesDigit { get; set; }
+        public string fieldAlign { get; set; }
+        public string fieldFormating { get; set; }
+        public bool dontSubTotal { get; set; }
+        public string totalRowAggregate { get; set; }
+        public string currencySymbol { get; set; }
+        public bool isNumeric { get; set; }
+        public bool isCurrency { get; set; }
+        public bool isJsonColumn { get; set; }
+        public string aggregateFunction { get; set; }
+        public bool outerGroup { get; set; }
+        public LinkFieldItem LinkFieldItem { get; set; }
+        public string headerFontColor { get; set; }
+        public string headerBackColor { get; set; }
+        public string fontColor { get; set; }
+        public string backColor { get; set; }
+        public string fieldWidth { get; set; }
+        public string dateFormat { get; set; }
+        public string customDateFormat { get; set; }
+        public string fieldType { get; set; }
+    }
+    public class LinkFieldItem
+    {
+        public int? LinkedToReportId { get; set; }
+        public int? SelectedFilterId { get; set; }
+        public bool LinksToReport { get; set; }
+        public bool SendAsFilterParameter { get; set; }
+        public string LinkToUrl { get; set; }
+        public bool SendAsQueryParameter { get; set; }
+        public string QueryParameterName { get; set; }
+    }
+    public class ExportReportModel
+    {
+        public int reportId { get; set; }
+        public string reportSql { get; set; }
+        public string connectKey { get; set; }
+        public string reportName { get; set; }
+        public string reportDescription { get; set; }
+        public bool expandAll { get; set; }
+        public bool hasSubreports { get; set; }
+        public string printUrl { get; set; }
+        public string clientId { get; set; }
+        public string userId { get; set; }
+        public string userRoles { get; set; }
+        public string dataFilters { get; set; }
+        public string expandSqls { get; set; }
+        public string pivotColumn { get; set; }
+        public string pivotFunction { get; set; }
+        public string pageSize { get; set; }
+        public string pageOrientation { get; set; }
+        public string chartData { get; set; }
+        public string columnDetails { get; set; }
+        public string onlyAndGroupInColumnDetail { get; set; }
+        public bool includeSubTotal { get; set; }
+        public bool includeColumnTotal { get; set; }
+        public bool pivot { get; set; }
+        public string reportType { get; set; }
+    }
+    public interface IDnrDataConnection
+    {
+        string DbConnection { get; set; }
+        string ConnectKey { get; set; }
+
+        DataTable ExecuteSql(string sql);
+    }
+
+    public class MsSqlDnrDataConnection : IDnrDataConnection
+    {
+        public string DbConnection { get; set; }
+        public string ConnectKey { get; set; }
+
+        public MsSqlDnrDataConnection(string connectKey)
+        {
+            ConnectKey = connectKey;
+        }
+
+        public DataTable ExecuteSql(string sql)
+        {
+            var dt = new DataTable();
+            using (var conn = new SqlConnection(DbConnection))
+            {
+                conn.Open();
+                var command = new SqlCommand(sql, conn);
+                var adapter = new SqlDataAdapter(command);
+
+                adapter.Fill(dt);
+                conn.Close();
+            }
+
+            return dt;
+        }
+    }
+
+
+    public static class DotNetReportHelper
+    {
+        private static IConfiguration _configuration;
+        private readonly static string _configFileName = "appsettings.dotnetreport.json";
+        public static string dbtype = DbTypes.MS_SQL.ToString().Replace("_", " ");
+
+        private static string _webAppRootUrl;
+        public static string WebAppRootUrl
+        {
+            get { return _webAppRootUrl ?? (_webAppRootUrl = StaticConfig.GetValue<string>("dotNetReport:webAppRootUrl") ?? ""); }
+            set { _webAppRootUrl = value; }
+        }
+        public static bool useAltPivot = false;
+        public static string defaultDateFormat = "United States";
+
+        private static readonly AsyncLocal<string> _dataFilters = new AsyncLocal<string>();
+        public static string CurrentDataFilters
+        {
+            get => string.IsNullOrEmpty(_dataFilters.Value) || _dataFilters.Value == "null" ? "{}" : _dataFilters.Value;
+            set => _dataFilters.Value = value;
+        }
+        private static readonly Regex CssRuleRegex = new Regex(
+            @"([^\{\}]+)\{([^\{\}]+)\}", RegexOptions.Compiled | RegexOptions.Singleline);
+
+        private class CssRule
+        {
+            public string Tag;
+            public string Id;
+            public List<string> Classes = new List<string>();
+            public List<CssRule> Ancestors = new List<CssRule>();
+            public int Specificity;
+            public int Order;
+            public Dictionary<string, (string Value, bool Important)> Declarations;
+        }
+
+        #region Report HTML sanitization (server-side XSS guard)
+
+        [ThreadStatic] private static bool _htmlRemovedSomething;
+        private static Ganss.Xss.HtmlSanitizer _reportHtmlSanitizer;
+
+        private static readonly (string method, string leaf, string requireFlag, (string name, bool isJson)[] containers)[] _reportHtmlFields =
+        {
+            ("SaveReportHeader",      "headerJson", null,         new (string, bool)[0]),
+            ("SaveReportFooter",      "footerJson", null,         new (string, bool)[0]),
+            ("RunReport",             "reportHtml", "SaveReport",  new[] { ("ReportJson", true), ("ReportSettings", true) }),
+            ("RunReport",             "CustomReportHeaderHtml", "SaveReport",  new[] { ("ReportJson", true), ("ReportSettings", true) }),
+            ("AddDashboardWidget",    "text",       null,         new[] { ("widgetSettings", true), ("Widget", false) }),
+            ("UpdateDashboardWidget", "text",       null,         new[] { ("widgetSettings", true), ("Widget", false) }),
+        };
+
+        private static Ganss.Xss.HtmlSanitizer GetReportHtmlSanitizer()
+        {
+            if (_reportHtmlSanitizer != null) return _reportHtmlSanitizer;
+
+            var s = new Ganss.Xss.HtmlSanitizer();
+
+            s.KeepChildNodes = true;
+            foreach (var tag in new[] { "font", "u", "s", "strike", "small", "sub", "sup", "mark",
+                                        "figure", "figcaption", "section", "article", "header", "footer", "main" })
+                s.AllowedTags.Add(tag);
+            foreach (var attr in new[] { "style", "class", "align", "valign", "width", "height", "border",
+                                         "cellpadding", "cellspacing", "colspan", "rowspan", "bgcolor" })
+                s.AllowedAttributes.Add(attr);
+            s.AllowDataAttributes = true;
+
+            // Allow base64 images (data:image/...) but nothing else through the data: scheme.
+            s.AllowedSchemes.Add("data");
+            s.FilterUrl += (sender, e) =>
+            {
+                var url = (e.OriginalUrl ?? e.SanitizedUrl)?.TrimStart().ToLowerInvariant();
+                if (url != null && url.StartsWith("data:") && !url.StartsWith("data:image/"))
+                {
+                    e.SanitizedUrl = null;
+                    _htmlRemovedSomething = true;
+                }
+            };
+            s.RemovingTag += (_, _) => _htmlRemovedSomething = true;
+            s.RemovingAttribute += (_, _) => _htmlRemovedSomething = true;
+            s.RemovingStyle += (_, _) => _htmlRemovedSomething = true;
+            s.RemovingAtRule += (_, _) => _htmlRemovedSomething = true;
+            s.RemovingCssClass += (_, _) => _htmlRemovedSomething = true;
+
+            return _reportHtmlSanitizer = s;
+        }
+
+        /// <summary>Strip executable markup from a raw HTML fragment. Null/empty passes through.</summary>
+        public static string SanitizeReportHtml(string html)
+            => string.IsNullOrEmpty(html) ? html : GetReportHtmlSanitizer().Sanitize(html);
+
+        private static bool TrySanitizeReportHtml(string html, out string clean)
+        {
+            _htmlRemovedSomething = false;
+            clean = GetReportHtmlSanitizer().Sanitize(html);
+            return _htmlRemovedSomething;
+        }
+
+        public static string SanitizeReportModelForMethod(string method, string model)
+        {
+            if (string.IsNullOrEmpty(method) || string.IsNullOrEmpty(model)) return model;
+
+            var fields = _reportHtmlFields.Where(f => method.EndsWith(f.method, StringComparison.OrdinalIgnoreCase)).ToList();
+            if (fields.Count == 0) return model;
+
+            try
+            {
+                var root = JObject.Parse(model);
+                var changed = false;
+                foreach (var field in fields)
+                {
+                    if (field.requireFlag != null && !GetBoolCI(root, field.requireFlag)) continue;
+                    if (SanitizeHtmlField(root, field.containers, 0, field.leaf)) changed = true;
+                }
+                return changed ? root.ToString(Formatting.None) : model;
+            }
+            catch
+            {
+                return model;
+            }
+        }
+
+        private static bool SanitizeHtmlField(JObject obj, (string name, bool isJson)[] containers, int idx, string leaf)
+        {
+            if (idx == containers.Length) return SanitizeHtmlLeaf(obj, leaf);
+
+            var (name, isJson) = containers[idx];
+            var prop = obj.Property(name, StringComparison.OrdinalIgnoreCase);
+            if (prop == null) return false;
+
+            if (isJson)
+            {
+                var innerJson = prop.Value.Type == JTokenType.String ? (string)prop.Value : null;
+                if (string.IsNullOrEmpty(innerJson)) return false;
+                JObject child;
+                try { child = JObject.Parse(innerJson); } catch { return false; }
+                if (!SanitizeHtmlField(child, containers, idx + 1, leaf)) return false;
+                prop.Value = child.ToString(Formatting.None);
+                return true;
+            }
+
+            // Plain nested object: descend in place; the change is captured when the nearest
+            // JSON-string ancestor is re-serialized.
+            if (prop.Value is not JObject childObj) return false;
+            return SanitizeHtmlField(childObj, containers, idx + 1, leaf);
+        }
+
+        private static bool SanitizeHtmlLeaf(JObject obj, string leaf)
+        {
+            var prop = obj.Property(leaf, StringComparison.OrdinalIgnoreCase);
+            if (prop == null || prop.Value.Type != JTokenType.String) return false;
+            var raw = (string)prop.Value;
+            if (string.IsNullOrEmpty(raw)) return false;
+
+            var decoded = Uri.UnescapeDataString(raw);
+            if (!TrySanitizeReportHtml(decoded, out var clean)) return false; // already safe -> leave bytes as-is
+
+            prop.Value = Uri.EscapeDataString(clean);
+            return true;
+        }
+
+        private static bool GetBoolCI(JObject obj, string name)
+        {
+            var prop = obj.Property(name, StringComparison.OrdinalIgnoreCase);
+            return prop != null && prop.Value.Type == JTokenType.Boolean && (bool)prop.Value;
+        }
+
+        #endregion
+
+        #region Custom SQL safety (read-only SELECT guard)
+
+        private static readonly string[] _sqlWriteKeywords =
+        {
+            "INSERT", "UPDATE", "DELETE", "DROP", "ALTER", "CREATE", "TRUNCATE", "MERGE",
+            "EXEC", "EXECUTE", "GRANT", "REVOKE", "DENY", "WAITFOR", "SHUTDOWN", "KILL",
+            "BACKUP", "RESTORE", "RECONFIGURE", "OPENROWSET", "OPENQUERY", "OPENDATASOURCE",
+            "OPENXML", "BULK", "INTO", "DBCC"
+        };
+
+        public static bool IsReadOnlySelectSql(string sql, out string reason)
+        {
+            reason = null;
+            if (string.IsNullOrWhiteSpace(sql)) { reason = "Empty SQL"; return false; }
+
+            // Strip block comments, line comments, and single-quoted string literals so keyword
+            // checks can't be fooled by content inside strings/comments.
+            var stripped = Regex.Replace(sql, @"/\*.*?\*/", " ", RegexOptions.Singleline);
+            stripped = Regex.Replace(stripped, @"--[^\n]*", " ");
+            stripped = Regex.Replace(stripped, @"'(?:''|[^'])*'", " '' ");
+            stripped = stripped.Trim();
+
+            if (stripped.Length == 0) { reason = "Empty SQL"; return false; }
+
+            // Must be a read query.
+            if (!Regex.IsMatch(stripped, @"^\s*(SELECT|WITH)\b", RegexOptions.IgnoreCase))
+            {
+                reason = "Only SELECT queries are allowed";
+                return false;
+            }
+
+            // Single statement only: no ';' other than an optional trailing one.
+            var withoutTrailing = stripped.TrimEnd().TrimEnd(';').TrimEnd();
+            if (withoutTrailing.Contains(';'))
+            {
+                reason = "Multiple SQL statements are not allowed";
+                return false;
+            }
+
+            // System / extended stored procedures.
+            if (Regex.IsMatch(stripped, @"\b(sp_|xp_)\w+", RegexOptions.IgnoreCase))
+            {
+                reason = "System stored procedures are not allowed";
+                return false;
+            }
+
+            // Data-modifying / procedural keywords.
+            foreach (var kw in _sqlWriteKeywords)
+            {
+                if (Regex.IsMatch(stripped, $@"\b{kw}\b", RegexOptions.IgnoreCase))
+                {
+                    reason = $"Keyword '{kw}' is not allowed in custom SQL";
+                    return false;
+                }
+            }
+
+            return true;
+        }
+
+        #endregion
+
+        public static System.Globalization.CultureInfo GetDateCulture(string dateFormatName)
+        {
+            switch (dateFormatName)
+            {
+                case "United Kingdom": return System.Globalization.CultureInfo.GetCultureInfo("en-GB");
+                case "New Zealand": return System.Globalization.CultureInfo.GetCultureInfo("en-NZ");
+                case "France": return System.Globalization.CultureInfo.GetCultureInfo("fr-FR");
+                case "German": return System.Globalization.CultureInfo.GetCultureInfo("de-DE");
+                case "Spanish": return System.Globalization.CultureInfo.GetCultureInfo("es-ES");
+                case "Chinese": return System.Globalization.CultureInfo.GetCultureInfo("zh-CN");
+                default: return System.Globalization.CultureInfo.GetCultureInfo("en-US");
+            }
+        }
+
+        public static string GetExcelDateFormat(ReportHeaderColumn formatColumn)
+        {
+            var ff = formatColumn?.fieldFormating;
+            var explicitDateFormat = ff == "Date" || ff == "Date and Time" || ff == "Time";
+
+            if (explicitDateFormat && formatColumn.dateFormat == "Custom" && !string.IsNullOrEmpty(formatColumn.customDateFormat))
+            {
+                return formatColumn.customDateFormat;
+            }
+
+            var resolvedName = explicitDateFormat && !string.IsNullOrEmpty(formatColumn.dateFormat)
+                ? formatColumn.dateFormat
+                : defaultDateFormat;
+
+            string dateOnly;
+            switch (resolvedName)
+            {
+                case "United Kingdom":
+                case "New Zealand":
+                case "France":
+                case "Spanish":
+                    dateOnly = "dd/mm/yyyy"; break;
+                case "German":
+                    dateOnly = "dd.mm.yyyy"; break;
+                case "Chinese":
+                    dateOnly = "yyyy/mm/dd"; break;
+                default:
+                    dateOnly = "mm/dd/yyyy"; break;
+            }
+
+            if (ff == "Date and Time") return dateOnly + " hh:mm:ss";
+            if (ff == "Time") return "hh:mm:ss";
+            return dateOnly;
+        }
+
+
+        // Only built when the host never calls UseConfiguration
+        private static readonly Lazy<IConfiguration> _fallbackConfiguration = new Lazy<IConfiguration>(() =>
+            new ConfigurationBuilder()
+                .SetBasePath(Directory.GetCurrentDirectory())
+                .AddJsonFile("appsettings.json", optional: true, reloadOnChange: true)
+                .AddJsonFile($"appsettings.{Environment.GetEnvironmentVariable("ASPNETCORE_ENVIRONMENT")}.json", optional: true, reloadOnChange: true)
+                .AddEnvironmentVariables()
+                .Build());
+
+        /// <summary>
+        /// Call at startup to hand Dotnet Report the host's own configuration, so tokens and connection
+        /// strings can come from any provider instead of appsettings.json on disk.
+        /// </summary>
+        public static void UseConfiguration(IConfiguration configuration)
+        {
+            if (configuration != null) _configuration = configuration;
+        }
+
+        public static IConfiguration StaticConfig => _configuration ?? _fallbackConfiguration.Value;
+
+        public static string GetConnectionString(string key, bool addOledbProvider = false)
+        {
+            var connString = StaticConfig.GetConnectionString(key);
+            if (connString == null)
+            {
+                return "";
+            }
+
+            connString = connString.Replace("Trusted_Connection=True", "");
+
+            if (!connString.ToLower().StartsWith("provider") && addOledbProvider)
+            {
+                connString = "Provider=sqloledb;" + connString;
+            }
+
+            return connString;
+        }
+
+        public static ConnectViewModel GetConnection(string databaseApiKey = "")
+        {
+            return new ConnectViewModel
+            {
+                ApiUrl = StaticConfig.GetValue<string>("dotNetReport:apiUrl"),
+                AccountApiKey = StaticConfig.GetValue<string>("dotNetReport:accountApiToken"),
+                DatabaseApiKey = string.IsNullOrEmpty(databaseApiKey) ? StaticConfig.GetValue<string>("dotNetReport:dataconnectApiToken") : databaseApiKey
+            };
+        }
+
+        public static async Task<string> GetConnectionString(ConnectViewModel connect, bool addOledbProvider = false)
+        {
+            if (connect.AccountApiKey == "Your Account API Key" || string.IsNullOrEmpty(connect.AccountApiKey) || string.IsNullOrEmpty(connect.DatabaseApiKey))
+                return "";
+
+            using (var client = new HttpClient())
+            {
+                var response = await client.GetAsync(String.Format("{0}/ReportApi/GetDataConnectKey?account={1}&dataConnect={2}", connect.ApiUrl, connect.AccountApiKey, connect.DatabaseApiKey));
+
+                if (!response.IsSuccessStatusCode)
+                {
+                    return "";
+                }
+
+                var content = await response.Content.ReadAsStringAsync();
+                return DotNetReportHelper.GetConnectionString(content.Replace("\"", ""), addOledbProvider);
+            }
+
+        }
+
+        public static bool IsNumericType(Type type)
+        {
+
+            switch (Type.GetTypeCode(type))
+            {
+                case TypeCode.Int16:
+                case TypeCode.UInt16:
+                case TypeCode.Int32:
+                case TypeCode.UInt32:
+                case TypeCode.Int64:
+                case TypeCode.UInt64:
+                case TypeCode.Single:
+                case TypeCode.Double:
+                case TypeCode.Decimal:
+                    return true;
+
+                case TypeCode.Boolean:
+                case TypeCode.DateTime:
+                case TypeCode.String:
+                default:
+                    return false;
+            }
+        }
+
+        public static Type GetType(FieldTypes type)
+        {
+            switch (type)
+            {
+                case FieldTypes.Boolean:
+                    return typeof(bool);
+                case FieldTypes.DateTime:
+                    return typeof(DateTime);
+                case FieldTypes.Double:
+                    return typeof(Double);
+                case FieldTypes.Int:
+                    return typeof(int);
+                case FieldTypes.Money:
+                    return typeof(decimal);
+                case FieldTypes.Varchar:
+                    return typeof(string);
+                default:
+                    return typeof(string);
+
+            }
+        }
+
+        public static string GetLabelValue(DataColumn col, DataRow row)
+        {
+            if (@row[col] != null && row[col] != DBNull.Value)
+            {
+                switch (Type.GetTypeCode(col.DataType))
+                {
+                    case TypeCode.Int16:
+                    case TypeCode.UInt16:
+                    case TypeCode.Int32:
+                    case TypeCode.UInt32:
+                    case TypeCode.Int64:
+                    case TypeCode.UInt64:
+                    case TypeCode.Single:
+                        return row[col].ToString();
+
+                    case TypeCode.Double:
+                    case TypeCode.Decimal:
+                        return @row[col].ToString();// "'" + (Convert.ToDouble(@row[col].ToString()).ToString("C")) + "'";
+
+                    case TypeCode.Boolean:
+                        return (Convert.ToBoolean(@row[col]) ? "Yes" : "No");
+
+                    case TypeCode.DateTime:
+                        try
+                        {
+                            return "'" + @Convert.ToDateTime(@row[col]).ToShortDateString() + "'";
+                        }
+                        catch
+                        {
+                            return "'" + @row[col] + "'";
+                        }
+
+                    case TypeCode.String:
+                    default:
+                        return "'" + @row[col].ToString().Replace("'", "") + "'";
+                }
+            }
+
+            return "";
+        }
+
+
+        static string ParseJsonValue(JToken json, string columnToExtract, bool asTable = true)
+        {
+            if (!string.IsNullOrEmpty(columnToExtract))
+            {
+                if (json.Type == JTokenType.Array)
+                {
+                    var results = new List<string>();
+
+                    foreach (var item in json.Children<JObject>())
+                    {
+                        var value = item[columnToExtract]?.ToString();
+                        if (value != null)
+                            results.Add(value);
+                    }
+
+                    return string.Join(", ", results); // or build table rows if asTable
+                }
+                else if (json.Type == JTokenType.Object)
+                {
+                    return json[columnToExtract]?.ToString();
+                }
+                else
+                {
+                    // For primitive values or unexpected types
+                    return json.ToString();
+                }
+            }
+
+            // full parsing if no columnToExtract
+            StringBuilder sb = new StringBuilder();
+            ParseJson(json, sb, "", asTable);
+            return asTable ? $"<table>{sb}</table>" : sb.ToString();
+        }
+
+        static void ParseJson(JToken token, StringBuilder sb, string prefix, bool asTable = true)
+        {
+            if (token.Type == JTokenType.Object)
+            {
+                foreach (JProperty prop in token.Children<JProperty>())
+                {
+                    string propName = prop.Name;
+                    if (!string.IsNullOrEmpty(prefix))
+                    {
+                        propName = prefix + " > " + propName;
+                    }
+
+                    ParseJson(prop.Value, sb, propName, asTable);
+                }
+            }
+            else if (token.Type == JTokenType.Array)
+            {
+                int index = 0;
+                foreach (JToken child in token.Children())
+                {
+                    ParseJson(child, sb, prefix + " - " + index + 1, asTable);
+                    index++;
+                }
+            }
+            else
+            {
+                string value = token.ToString();
+                if (!string.IsNullOrEmpty(prefix))
+                {
+                    if (asTable)
+                        sb.AppendFormat($"<tr><td>{prefix}</td><td>{value}</td></tr>\n");
+                    else
+                        sb.AppendFormat($"{prefix} is {value}\n");
+                }
+            }
+        }
+
+        static bool IsValidJson(string json)
+        {
+            try
+            {
+                JToken.Parse(json);
+                return true;
+            }
+            catch (Exception)
+            {
+                return false;
+            }
+        }
+        public static bool IsNumeric(string value)
+        {
+            double result;
+            return double.TryParse(value, out result);
+        }
+
+
+        public static string GetFormattedValue(DataColumn col, DataRow row, string formatType, bool jsonAsTable = true)
+        {
+            if (row[col] != null && row[col] != DBNull.Value && !string.IsNullOrEmpty(row[col].ToString()))
+            {
+                var val = row[col].ToString().Trim();
+                if ((val.StartsWith("[") || val.StartsWith("{")) && IsValidJson(val) && !IsNumeric(val))
+                {
+                    JToken json = JToken.Parse(val);
+                    return ParseJsonValue(json, formatType == "Json" ? col.ColumnName : "", jsonAsTable);
+                }
+
+                switch (Type.GetTypeCode(col.DataType))
+                {
+                    case TypeCode.Int16:
+                    case TypeCode.UInt16:
+                    case TypeCode.Int32:
+                    case TypeCode.UInt32:
+                    case TypeCode.Int64:
+                    case TypeCode.UInt64:
+                    case TypeCode.Single:
+                        return row[col].ToString();
+
+
+                    case TypeCode.Double:
+                    case TypeCode.Decimal:
+                        return col.ColumnName.Contains("%")
+                            ? (Convert.ToDouble(row[col].ToString()) / 100).ToString("P2")
+                            : Convert.ToDouble(row[col].ToString()).ToString();
+
+
+                    case TypeCode.Boolean:
+                        return (Convert.ToBoolean(row[col]) ? "Yes" : "No");
+
+
+                    case TypeCode.DateTime:
+                        try
+                        {
+                            return Convert.ToDateTime(row[col]).ToShortDateString();
+                        }
+                        catch
+                        {
+                            return row[col] != null ? row[col].ToString() : null;
+                        }
+
+                    case TypeCode.String:
+                    default:
+                        if (row[col].ToString() == "System.Byte[]")
+                        {
+
+                            return "<img src=\"data:image/png;base64," + Convert.ToBase64String((byte[])row[col], 0, ((byte[])row[col]).Length) + "\" style=\"max-width: 200px;\" />";
+                        }
+                        else
+                        {
+                            return row[col].ToString();
+                        }
+
+                }
+            }
+            return "";
+        }
+
+        private static void RemoveColumnsBySubstring(DataTable dt, string substring)
+        {
+            if (dt == null || string.IsNullOrEmpty(substring))
+                return;
+
+            for (int i = dt.Columns.Count - 1; i >= 0; i--) // Loop from the end to avoid index shifting
+            {
+                if (dt.Columns[i].ColumnName.Contains(substring))
+                {
+                    dt.Columns.RemoveAt(i); // Remove the column
+                }
+            }
+        }
+        public static string UpdateOnlyTop(string expandSqls)
+        {
+            var jsonObj = JObject.Parse(expandSqls);
+            if (jsonObj["OnlyTop"]?.Type != JTokenType.Null)
+            {
+                jsonObj["OnlyTop"] = null;
+            }
+            return jsonObj.ToString();
+        }
+        private static void FormatExcelSheet(DataTable dt, ExcelWorksheet ws, int rowstart, int colstart, List<ReportHeaderColumn> columns = null, bool includeSubtotal = false, bool loadHeader = true, string chartData = null,bool isexpanded=false,bool isSubReport= false,bool isFilterDetail = false)
+        {
+            RemoveColumnsBySubstring(dt, "__prm__");
+            ws.Cells[rowstart, colstart].LoadFromDataTable(dt, loadHeader);
+            if (loadHeader) ws.Cells[rowstart, colstart, rowstart, colstart + dt.Columns.Count -1].Style.Font.Bold = true;
+            int headerRow = isFilterDetail ? 4 : 3;
+            if (!string.IsNullOrEmpty(chartData) && chartData != "undefined")
+            {
+                byte[] imageBytes = Convert.FromBase64String(chartData.Substring(chartData.LastIndexOf(',') + 1));
+                using (MemoryStream ms = new MemoryStream(imageBytes))
+                {
+                    Image image = Image.FromStream(ms);
+                    // Add the image to the worksheet
+                    var picture = ws.Drawings.AddPicture("ChartImage", image);
+                    int imageColOffset = isexpanded ? (dt.Columns.Count * 2) + 2 : dt.Columns.Count + 1;
+                    picture.SetPosition(1, 0, imageColOffset, 0); // Set the position of the image
+                    picture.SetSize(400, 300); // Set the size of the image in pixels (width, height)
+                }
+            }
+            int i = colstart; var isNumeric = false;int counter = 1;
+            foreach (DataColumn dc in dt.Columns)
+            {
+                var value = "";
+                var formatColumn = GetColumnFormatting(dc, columns, ref value);
+                string decimalFormat = new string('0', formatColumn.decimalPlacesDigit.GetValueOrDefault());
+                isNumeric = dc.DataType.Name.StartsWith("Int") || dc.DataType.Name == "Double" || dc.DataType.Name == "Decimal";
+                if (rowstart == headerRow & !string.IsNullOrEmpty(formatColumn.fieldLabel))
+                {
+                    ws.Cells[rowstart, i].Value = formatColumn.fieldLabel;
+                }
+                if (rowstart == headerRow & isexpanded && !string.IsNullOrEmpty(formatColumn.fieldLabel2))
+                {
+                    ws.Cells[rowstart, i].Value = formatColumn.fieldLabel2;
+                }
+                if (rowstart == headerRow & isSubReport && !string.IsNullOrEmpty(formatColumn.fieldLabel2))
+                {
+                    ws.Cells[rowstart, i].Value = formatColumn.fieldLabel2;
+                }
+                if (dc.DataType == typeof(decimal) || (formatColumn != null && formatColumn.fieldFormating == "Decimal"))
+                {
+                    if (formatColumn != null && formatColumn.decimalPlacesDigit != null)
+                    {
+                        ws.Column(i).Style.Numberformat.Format = "###,###,##0." + decimalFormat;
+                    }
+                    else
+                    {
+                        ws.Column(i).Style.Numberformat.Format = "###,###,##0.00";
+                    }
+                    isNumeric = true;
+                }
+                if (dc.DataType == typeof(DateTime))
+                    ws.Column(i).Style.Numberformat.Format = GetExcelDateFormat(formatColumn);
+
+                if (formatColumn != null && formatColumn.fieldFormating == "Currency")
+                {
+                    if (formatColumn.currencySymbol != null && formatColumn.decimalPlacesDigit != null)
+                    {
+                        ws.Column(i).Style.Numberformat.Format = formatColumn.currencySymbol + "###,###,##0." + decimalFormat;
+                    }
+                    else if (formatColumn.currencySymbol != null)
+                    {
+                        ws.Column(i).Style.Numberformat.Format = formatColumn.currencySymbol + "###,###,##0.00";
+                    }
+                    else
+                    {
+                        ws.Column(i).Style.Numberformat.Format = "$###,###,##0.00";
+                    }
+                    isNumeric = true;
+                }
+                if (formatColumn != null && formatColumn.isJsonColumn)
+                {
+                    ws.Column(i).Style.Numberformat.Format = "@";
+                    ws.Column(i).Style.WrapText = true;
+                }
+                if (formatColumn != null)
+                {
+                    ws.Column(i).Style.HorizontalAlignment = formatColumn.fieldAlign == "Right" || (isNumeric && (formatColumn.fieldAlign == "Auto" || string.IsNullOrEmpty(formatColumn.fieldAlign))) ? OfficeOpenXml.Style.ExcelHorizontalAlignment.Right : formatColumn.fieldAlign == "Center" ? OfficeOpenXml.Style.ExcelHorizontalAlignment.Center : OfficeOpenXml.Style.ExcelHorizontalAlignment.Left;
+                }
+
+                if (includeSubtotal)
+                {
+                    if (!(formatColumn?.dontSubTotal ?? false))
+                    {
+                        var agg = formatColumn?.totalRowAggregate ?? "Sum";
+                        bool isCountAgg = agg == "Count" || agg == "Count Distinct";
+                        if (isNumeric || isCountAgg)
+                        {
+                            decimal subtotal = ComputeAggregateValue(agg, dt.Rows.Cast<DataRow>(), dc.ColumnName);
+                            ws.Cells[dt.Rows.Count + rowstart + 1, i].Value = subtotal;
+                            ws.Cells[dt.Rows.Count + rowstart + 1, i].Style.Font.Bold = true;
+                        }
+                    }
+                }
+                if (formatColumn != null)
+                {
+                    var headerCell = ws.Cells[rowstart, i];
+                    if (!string.IsNullOrEmpty(formatColumn.headerFontColor))
+                        headerCell.Style.Font.Color.SetColor(ColorTranslator.FromHtml(formatColumn.headerFontColor));
+                    if (!string.IsNullOrEmpty(formatColumn.headerBackColor))
+                    {
+                        headerCell.Style.Fill.PatternType = OfficeOpenXml.Style.ExcelFillStyle.Solid;
+                        headerCell.Style.Fill.BackgroundColor.SetColor(ColorTranslator.FromHtml(formatColumn.headerBackColor));
+                    }
+                    int increment = rowstart == headerRow ? 1 : 0;
+                    for (int rowIndex = 0; rowIndex < dt.Rows.Count; rowIndex++)
+                    {
+                        var cellValue = dt.Rows[rowIndex][dc.ColumnName]?.ToString();
+                        if (!string.IsNullOrEmpty(cellValue))
+                        {
+                            var cell = ws.Cells[rowIndex + rowstart + increment, i];
+                            if (!string.IsNullOrEmpty(formatColumn.fontColor))
+                                cell.Style.Font.Color.SetColor(ColorTranslator.FromHtml(formatColumn.fontColor));
+                            if (!string.IsNullOrEmpty(formatColumn.backColor))
+                            {
+                                cell.Style.Fill.PatternType = OfficeOpenXml.Style.ExcelFillStyle.Solid;
+                                cell.Style.Fill.BackgroundColor.SetColor(ColorTranslator.FromHtml(formatColumn.backColor));
+                            }
+                        }
+                    }
+                }
+                if (formatColumn != null && formatColumn?.LinkFieldItem != null && formatColumn?.LinkFieldItem.LinkToUrl != null)
+                {
+                    for (int rowIndex = 0; rowIndex < dt.Rows.Count; rowIndex++)
+                    {
+                        var cellValue = dt.Rows[rowIndex][dc.ColumnName]?.ToString();
+                        if (!string.IsNullOrEmpty(cellValue))
+                        {
+                            var increment = rowstart==3 ? 1 : 0;
+                            var hyperlinkAddress = formatColumn.LinkFieldItem.SendAsQueryParameter ? $"{formatColumn.LinkFieldItem.LinkToUrl}?{formatColumn.LinkFieldItem.QueryParameterName}={cellValue}" : formatColumn.LinkFieldItem.LinkToUrl;
+                            var linkUri = BuildHyperlinkUri(hyperlinkAddress);
+                            if (linkUri != null)
+                            {
+                                ws.Cells[rowIndex + rowstart + increment, i].Hyperlink = linkUri;
+                                ws.Cells[rowIndex + rowstart + increment, i].Style.Font.UnderLine = true;
+                                ws.Cells[rowIndex + rowstart + increment, i].Style.Font.Color.SetColor(System.Drawing.Color.Blue);
+                            }
+                        }
+                    }
+                }
+                if (formatColumn != null && formatColumn?.LinkFieldItem != null && formatColumn?.LinkFieldItem.LinksToReport != null && formatColumn?.LinkFieldItem.LinksToReport == true)
+                {
+                    for (int rowIndex = 0; rowIndex < dt.Rows.Count; rowIndex++)
+                    {
+                        var cellValue = dt.Rows[rowIndex][dc.ColumnName]?.ToString();
+                        if (!string.IsNullOrEmpty(cellValue))
+                        {
+                            var increment = rowstart == headerRow ? 1 : 0;
+                            var hyperlinkAddress = "/DotNetReport/Report?linkedreport=true&reportId=" + formatColumn.LinkFieldItem.LinkedToReportId;
+                            if (formatColumn.LinkFieldItem.SendAsFilterParameter && !string.IsNullOrEmpty(cellValue))
+                            {
+                                hyperlinkAddress += $"&filterId={formatColumn.LinkFieldItem.SelectedFilterId}&filterValue={cellValue.Replace("'", "").Replace("\"", "")}";
+                            }
+                            var linkUri = BuildHyperlinkUri(hyperlinkAddress);
+                            if (linkUri != null)
+                            {
+                                ws.Cells[rowIndex + rowstart + increment, i].Hyperlink = linkUri;
+                                ws.Cells[rowIndex + rowstart + increment, i].Style.Font.UnderLine = true;
+                                ws.Cells[rowIndex + rowstart + increment, i].Style.Font.Color.SetColor(System.Drawing.Color.Blue);
+                            }
+                        }
+                    }
+                }
+                i++;
+                counter++;
+            }
+
+            ApplyColumnWidths(ws, colstart, dt.Columns.Count, columns);
+        }
+
+        private static void ApplyColumnWidths(ExcelWorksheet ws, int colstart, int columnCount, List<ReportHeaderColumn> columns)
+        {
+            if (ws.Dimension == null) return;
+
+            ws.Cells[ws.Dimension.Address].AutoFitColumns();
+
+            if (columns == null || !columns.Any()) return;
+
+            for (int i = 0; i < columnCount && i < columns.Count; i++)
+            {
+                var col = columns[i];
+                if (string.IsNullOrEmpty(col?.fieldWidth)) continue;
+
+                var width = col.fieldWidth.Trim().ToLower();
+                double pxValue;
+
+                if (width.EndsWith("px") && double.TryParse(width.Replace("px", ""), out pxValue) && pxValue > 0)
+                {
+                    ws.Column(colstart + i).Width = pxValue / 7;
+                }
+            }
+        }
+
+        private static Uri BuildHyperlinkUri(string address)
+        {
+            if (string.IsNullOrWhiteSpace(address)) return null;
+            if (Uri.TryCreate(address, UriKind.Absolute, out var absolute)) return absolute;
+            if (string.IsNullOrEmpty(WebAppRootUrl)) return null;
+
+            return Uri.TryCreate(WebAppRootUrl.TrimEnd('/') + "/" + address.TrimStart('/'), UriKind.Absolute, out var resolved)
+                ? resolved
+                : null;
+        }
+
+        public static DataTable Transpose(DataTable dt)
+        {
+            DataTable dtNew = new DataTable();
+
+            for (int i = 0; i <= dt.Rows.Count; i++)
+            {
+                dtNew.Columns.Add(i.ToString());
+            }
+
+            dtNew.Columns[0].ColumnName = " ";
+
+            for (int i = 0; i < dt.Rows.Count; i++)
+            {
+                dtNew.Columns[i + 1].ColumnName = dt.Rows[i].ItemArray[0].ToString();
+            }
+
+            for (int k = 1; k < dt.Columns.Count; k++)
+            {
+                DataRow r = dtNew.NewRow();
+                r[0] = dt.Columns[k].ToString();
+                for (int j = 1; j <= dt.Rows.Count; j++)
+                    r[j] = dt.Rows[j - 1][k];
+                dtNew.Rows.Add(r);
+            }
+
+            return dtNew;
+        }
+
+        public static async Task<List<CustomFunctionModel>> GetApiFunctions()
+        {
+            var settings = new DotNetReportSettings
+            {
+                ApiUrl = StaticConfig.GetValue<string>("dotNetReport:apiUrl"),
+                AccountApiToken = StaticConfig.GetValue<string>("dotNetReport:accountApiToken"), // Your Account Api Token from your http://dotnetreport.com Account
+                DataConnectApiToken = StaticConfig.GetValue<string>("dotNetReport:dataconnectApiToken") // Your Data Connect Api Token from your http://dotnetreport.com Account
+            };
+
+            return await GetApiFunctions(settings.AccountApiToken, settings.DataConnectApiToken);
+        }
+
+        public static async Task<List<CustomFunctionModel>> GetApiFunctions(string accountKey, string dataConnectKey)
+        {
+            using (var client = new HttpClient())
+            {
+                var response = await client.GetAsync(String.Format("{0}/ReportApi/GetCustomFunctions?account={1}&dataConnect={2}&clientId=", StaticConfig.GetValue<string>("dotNetReport:apiUrl"), accountKey, dataConnectKey));
+                response.EnsureSuccessStatusCode();
+                var content = await response.Content.ReadAsStringAsync();
+                var functions = JsonConvert.DeserializeObject<List<CustomFunctionModel>>(content);
+
+                return functions;
+            }
+        }
+
+        public static async Task<string> RunReportApiCall(string postData)
+        {
+            using (var client = new HttpClient())
+            {
+                var settings = new DotNetReportSettings
+                {
+                    ApiUrl = StaticConfig.GetValue<string>("dotNetReport:apiUrl"),
+                    AccountApiToken = StaticConfig.GetValue<string>("dotNetReport:accountApiToken"), // Your Account Api Token from your http://dotnetreport.com Account
+                    DataConnectApiToken = StaticConfig.GetValue<string>("dotNetReport:dataconnectApiToken") // Your Data Connect Api Token from your http://dotnetreport.com Account
+                };
+                var keyvalues = new List<KeyValuePair<string, string>>
+                {
+                    new KeyValuePair<string, string>("Account", settings.AccountApiToken),
+                    new KeyValuePair<string, string>("DataConnect", settings.DataConnectApiToken),
+                    new KeyValuePair<string, string>("ClientId", ""),
+                    new KeyValuePair<string, string>("UserId", ""),
+                    new KeyValuePair<string, string>("SubTotalMode", "false"),
+                    new KeyValuePair<string, string>("AdminMode", "false"),
+                    new KeyValuePair<string, string>("UserIdForSchedule", ""),
+                    new KeyValuePair<string, string>("ReportJson", postData),
+                    new KeyValuePair<string, string>("SaveReport", "false"),
+                    new KeyValuePair<string, string>("dataFilters", CurrentDataFilters),
+                };
+
+                var encodedItems = keyvalues.Select(i => WebUtility.UrlEncode(i.Key) + "=" + WebUtility.UrlEncode(i.Value));
+                var encodedContent = new StringContent(String.Join("&", encodedItems), null, "application/x-www-form-urlencoded");
+
+                var response = await client.PostAsync(new Uri(settings.ApiUrl + "/ReportApi/RunDrillDownReport"), encodedContent);
+                var stringContent = await response.Content.ReadAsStringAsync();
+                var sql = "";
+                if (stringContent.Contains("\"sql\":"))
+                {
+                    var sqlQuery = System.Text.Json.JsonSerializer.Deserialize<Dictionary<string, object>>(stringContent);
+                    object value;
+                    var keyValuePair = sqlQuery.TryGetValue("sql", out value);
+                    sql = Decrypt(value.ToString());
+                }
+
+                return sql;
+            }
+        }
+        public static int FindFromIndex(string sql)
+        {
+            if (sql.Contains("{FROM} "))
+            {
+                return sql.IndexOf("{FROM} ");
+            }
+
+            int parenthesesCount = 0;
+
+            for (int i = 0; i < sql.Length - 4; i++)  // -4 because "FROM" has 4 characters
+            {
+                if (sql[i] == '(')
+                {
+                    parenthesesCount++;
+                }
+                else if (sql[i] == ')')
+                {
+                    parenthesesCount--;
+                }
+                else if (parenthesesCount == 0 && sql.Substring(i, 4).Equals("FROM", StringComparison.OrdinalIgnoreCase))
+                {
+                    return i;
+                }
+            }
+
+            return sql.Length;
+        }
+
+        public static string RemoveLeadingSelect(string selectClause)
+        {
+            var trimmed = selectClause.TrimStart();
+            if (trimmed.StartsWith("SELECT", StringComparison.OrdinalIgnoreCase))
+                trimmed = trimmed.Substring("SELECT".Length);
+            return trimmed.Trim();
+        }
+
+        public static async Task<List<TableViewModel>> GetApiTables(string accountKey, string dataConnectKey, bool loadColumns = false)
+        {
+            using (var client = new HttpClient())
+            {
+                var response = await client.GetAsync(String.Format("{0}/ReportApi/GetTables?account={1}&dataConnect={2}&clientId=&includeDoNotDisplay=true&includeColumns=true", DotNetReportHelper.StaticConfig.GetValue<string>("dotNetReport:apiUrl"), accountKey, dataConnectKey));
+                response.EnsureSuccessStatusCode();
+                var content = await response.Content.ReadAsStringAsync();
+                dynamic values = JsonConvert.DeserializeObject<dynamic>(content);
+                var tables = new List<TableViewModel>();
+                foreach (var item in values)
+                {
+                    var table = new TableViewModel
+                    {
+                        Id = item.tableId,
+                        SchemaName = item.schemaName == null ? "" : item.schemaName,
+                        AccountIdField = item.accountIdField,
+                        TableName = item.tableDbName,
+                        DisplayName = item.tableName,
+                        AllowedRoles = item.tableRoles.ToObject<List<string>>(),
+                        Categories= item.tableCategories != null ? ((JArray)item.tableCategories).ToObject<List<dynamic>>().Select(c => new CategoryViewModel { Id = c.CategoryId, Name = c.Name, Description = c.Description }).ToList() : new List<CategoryViewModel>(),
+                        DoNotDisplay = item.doNotDisplay,
+                        CustomTable = item.customTable,
+                        CustomTableSql = Convert.ToBoolean(item.customTable) == true ? DotNetReportHelper.TryDecrypt(Convert.ToString(item.customTableSql)) : "",
+                        DynamicColumns = item.dynamicColumns != null ? Convert.ToBoolean(item.dynamicColumns) : false,
+                        DynamicColumnTranslation = item.dynamicColumns != null && Convert.ToBoolean(item.dynamicColumns) == true ? DotNetReportHelper.TryDecrypt(Convert.ToString(item.dynamicColumnTranslation)) : "",
+                        DynamicValuesTableId = item.dynamicValuesTableId != null ? Convert.ToInt32(item.dynamicValuesTableId) : null,
+                        Columns = new List<ColumnViewModel>(),
+                        Selected = true
+                    };
+
+                    if (loadColumns)
+                    {
+                        if (table.DynamicColumns)
+                        {
+                            try
+                            {
+                                var connString = await DotNetReportHelper.GetConnectionString(DotNetReportHelper.GetConnection(dataConnectKey));
+                                IDatabaseConnection databaseConnection = DatabaseConnectionFactory.GetConnection(DotNetReportHelper.dbtype);
+
+                                var dt = databaseConnection.ExecuteQuery(connString, table.CustomTableSql);
+                                foreach (DataRow dr in dt.Rows)
+                                {
+                                    table.Columns.Add(new ColumnViewModel { ColumnName = Convert.ToString(dr[0]), DisplayName = Convert.ToString(dr[0]) });
+                                }
+                            } 
+                            catch(Exception ex)
+                            {
+                                Console.Write(ex.Message);
+                            }
+                        }
+                        else
+                        {
+                            foreach (var field in item.fields)
+                            {
+                                table.Columns.Add(new ColumnViewModel
+                                {
+                                    Id = field.fieldId,
+                                    ColumnName = field.fieldDbName,
+                                    DisplayName = field.fieldName,
+                                    FieldType = field.fieldType,
+                                    PrimaryKey = field.isPrimary,
+                                    ForeignKey = field.hasForeignKey,
+                                    DisplayOrder = field.fieldOrder,
+                                    ForeignKeyField = field.foreignKey,
+                                    ForeignValueField = field.foreignValue,
+                                    ForeignJoin = field.foreignJoin,
+                                    ForeignTable = field.foreignTable,
+                                    DoNotDisplay = field.doNotDisplay,
+                                    ForceFilter = field.forceFilter,
+                                    ForceFilterForTable = field.forceFilterForTable,
+                                    RestrictedDateRange = field.restrictedDateRange,
+                                    RestrictedEndDate = field.restrictedEndDate,
+                                    RestrictedStartDate = field.restrictedStartDate,
+                                    AllowedRoles = field.columnRoles.ToObject<List<string>>(),
+
+                                    ForeignParentKey = field.hasForeignParentKey,
+                                    ForeignParentApplyTo = field.foreignParentApplyTo,
+                                    ForeignParentKeyField = field.foreignParentKeyField,
+                                    ForeignParentValueField = field.foreignParentValueField,
+                                    ForeignParentTable = field.foreignParentTable,
+                                    ForeignParentRequired = field.foreignParentRequired,
+                                    ForeignFilterOnly = field.foreignFilterOnly,
+
+                                    JsonStructure = field.jsonStructure,
+                                    Selected = true
+                                });
+                            }
+                        }
+                    }
+
+                    tables.Add(table);
+                }
+
+                return tables;
+            }
+        }
+
+        public static async Task<List<ColumnViewModel>> GetApiFields(string accountKey, string dataConnectKey, int tableId)
+        {
+            using (var client = new HttpClient())
+            {
+                var response = await client.GetAsync(String.Format("{0}/ReportApi/GetFields?account={1}&dataConnect={2}&clientId={3}&tableId={4}&includeDoNotDisplay=true", DotNetReportHelper.StaticConfig.GetValue<string>("dotNetReport:apiUrl"), accountKey, dataConnectKey, "", tableId));
+
+                response.EnsureSuccessStatusCode();
+
+                var content = await response.Content.ReadAsStringAsync();
+
+                dynamic values = JsonConvert.DeserializeObject<dynamic>(content);
+
+                var columns = new List<ColumnViewModel>();
+                foreach (var item in values)
+                {
+                    var column = new ColumnViewModel
+                    {
+                        Id = item.fieldId,
+                        ColumnName = item.fieldDbName,
+                        DisplayName = item.fieldName,
+                        FieldType = item.fieldType,
+                        PrimaryKey = item.isPrimary,
+                        ForeignKey = item.hasForeignKey,
+                        DisplayOrder = item.fieldOrder,
+                        ForeignKeyField = item.foreignKey,
+                        ForeignValueField = item.foreignValue,
+                        ForeignJoin = item.foreignJoin,
+                        ForeignTable = item.foreignTable,
+                        DoNotDisplay = item.doNotDisplay,
+                        ForceFilter = item.forceFilter,
+                        ForceFilterForTable = item.forceFilterForTable,
+                        RestrictedDateRange = item.restrictedDateRange,
+                        RestrictedEndDate = item.restrictedEndDate,
+                        RestrictedStartDate = item.restrictedStartDate,
+                        AllowedRoles = item.columnRoles.ToObject<List<string>>(),
+
+                        ForeignParentKey = item.hasForeignParentKey,
+                        ForeignParentApplyTo = item.foreignParentApplyTo,
+                        ForeignParentKeyField = item.foreignParentKey,
+                        ForeignParentValueField = item.foreignParentValue,
+                        ForeignParentTable = item.foreignParentTable,
+                        ForeignParentRequired = item.foreignParentRequired,
+                        ForeignFilterOnly = item.foreignFilterOnly,
+
+                        JsonStructure = item.jsonStructure
+                    };
+
+                    columns.Add(column);
+                }
+
+                return columns;
+            }
+        }
+        public static async Task<List<TableViewModel>> GetApiProcs(string accountKey, string dataConnectKey)
+        {
+            using (var client = new HttpClient())
+            {
+                var response = await client.GetAsync(String.Format("{0}/ReportApi/GetProcedures?account={1}&dataConnect={2}&clientId=", DotNetReportHelper.StaticConfig.GetValue<string>("dotNetReport:apiUrl"), accountKey, dataConnectKey));
+                response.EnsureSuccessStatusCode();
+                var content = await response.Content.ReadAsStringAsync();
+                var tables = JsonConvert.DeserializeObject<List<TableViewModel>>(content);
+
+                return tables;
+            }
+        }
+
+        public static List<string> SplitSqlColumns(string sql, string dbType = "MS SQL")
+        {
+            if (string.IsNullOrWhiteSpace(sql)) return new List<string>();
+            sql = sql.Trim();
+            var selectPart = ""; 
+            var current = new StringBuilder();
+            int parenDepth = 0;
+            bool inSingleQuote = false;
+            bool inDoubleQuote = false;
+            bool inBacktick = false;
+            bool inString = false;
+            var columns = new List<string>();
+
+            switch (dbType)
+            {
+                case "MySql":
+                    if (sql.StartsWith("CALL", StringComparison.OrdinalIgnoreCase))
+                        return new List<string>();
+
+                    var fromIndexMy = FindFromIndex(sql);
+                    if (fromIndexMy <= 0) return new List<string>();
+
+                    selectPart = RemoveLeadingSelect(sql.Substring(0, fromIndexMy));
+
+
+                    foreach (char c in selectPart)
+                    {
+                        if (c == '\'' && !inDoubleQuote && !inBacktick)
+                            inSingleQuote = !inSingleQuote;
+                        else if (c == '"' && !inSingleQuote && !inBacktick)
+                            inDoubleQuote = !inDoubleQuote;
+                        else if (c == '`' && !inSingleQuote && !inDoubleQuote)
+                            inBacktick = !inBacktick;
+                        else if (c == '(' && !inSingleQuote && !inDoubleQuote && !inBacktick)
+                            parenDepth++;
+                        else if (c == ')' && !inSingleQuote && !inDoubleQuote && !inBacktick && parenDepth > 0)
+                            parenDepth--;
+                        else if (c == ',' && parenDepth == 0 && !inSingleQuote && !inDoubleQuote && !inBacktick)
+                        {
+                            // split here
+                            columns.Add(current.ToString().Trim());
+                            current.Clear();
+                            continue;
+                        }
+
+                        current.Append(c);
+                    }
+
+                    if (current.Length > 0)
+                        columns.Add(current.ToString().Trim());
+
+                    return columns
+                        .Select(x => x.Trim())
+                        .Select(x => x.StartsWith("DISTINCT ", StringComparison.OrdinalIgnoreCase) ? x.Substring(9).Trim() : x)
+                        .ToList();
+
+                case "PostgreSQL":
+                    if (sql.StartsWith("CALL", StringComparison.OrdinalIgnoreCase))
+                        return new List<string>();
+
+                    var fromIndexPg = FindFromIndex(sql);
+                    if (fromIndexPg <= 0) return new List<string>();
+
+                    var sqlSplitPg = RemoveLeadingSelect(sql.Substring(0, fromIndexPg));
+                    sqlSplitPg = Regex.Replace(sqlSplitPg, @"LIMIT\\s+\\d+(\\s+OFFSET\\s+\\d+)?", "", RegexOptions.IgnoreCase);
+
+                    return Regex.Split(sqlSplitPg, ",(?![^()]*\\))")
+                        .Select(x => x.Trim())
+                        .Select(x => x.StartsWith("DISTINCT ", StringComparison.OrdinalIgnoreCase) ? x.Substring(9).Trim() : x)
+                        .Select(x => x.Replace("\"", ""))
+                        .Where(x => Regex.IsMatch(x, "\\s+AS\\s+", RegexOptions.IgnoreCase))
+                        .ToList();
+
+                case "MS SQL":
+                default:
+                    if (sql.StartsWith("EXEC", StringComparison.OrdinalIgnoreCase))
+                        return new List<string>();
+
+                    var fromIndex = FindFromIndex(sql);
+                    if (fromIndex < 0) return new List<string>();
+
+                    selectPart = RemoveLeadingSelect(sql.Substring(0, fromIndex));
+
+                    var cols = new List<string>();
+                    var sb = new StringBuilder();
+                    inString = false; bool inComment = false;
+                    int depth = 0;
+
+                    for (int i = 0; i < selectPart.Length; i++)
+                    {
+                        char c = selectPart[i], n = i + 1 < selectPart.Length ? selectPart[i + 1] : '\0';
+
+                        if (!inString && !inComment && c == '/' && n == '*') { inComment = true; i++; continue; }
+                        if (inComment && c == '*' && n == '/') { inComment = false; i++; continue; }
+                        if (inComment) continue;
+
+                        if (c == '\'' && (i == 0 || selectPart[i - 1] != '\\')) inString = !inString;
+
+                        if (!inString) { if (c == '(') depth++; else if (c == ')') depth--; }
+
+                        if (c == ',' && depth == 0 && !inString)
+                        {
+                            cols.Add(sb.ToString().Trim());
+                            sb.Clear();
+                            continue;
+                        }
+
+                        sb.Append(c);
+                    }
+
+                    if (sb.Length > 0) cols.Add(sb.ToString().Trim());
+
+                    return cols
+                        .Select(x => x.StartsWith("DISTINCT ", StringComparison.OrdinalIgnoreCase) ? x[9..] : x)
+                        .Select(x => Regex.Replace(x, @"TOP\s+\d+", "", RegexOptions.IgnoreCase))
+                        .Where(x => x.Contains(" AS ", StringComparison.OrdinalIgnoreCase))
+                        .ToList();
+
+            }
+        }
+
+
+        public static DotNetReportDataModel DataTableToDotNetReportDataModel(DataTable dt, List<string> sqlFields, bool jsonAsTable = true)
+        {
+            var model = new DotNetReportDataModel
+            {
+                Columns = new List<DotNetReportDataColumnModel>(),
+                Rows = new List<DotNetReportDataRowModel>()
+            };
+
+            if (!sqlFields.Any())
+            {
+                foreach (DataColumn c in dt.Columns) { sqlFields.Add($"{c.ColumnName} AS {c.ColumnName}"); }
+            }
+
+            int i = 0;
+            foreach (DataColumn col in dt.Columns)
+            {
+                var sqlField = sqlFields[i++];
+                if (col.ColumnName.Contains("__prm__")) continue;
+                model.Columns.Add(new DotNetReportDataColumnModel
+                {
+                    SqlField = sqlField.Contains(" FROM ") ? col.ColumnName : sqlField.Substring(0, sqlField.LastIndexOf(" AS ")).Trim().Replace("__jsonc__", ""),
+                    ColumnName = col.ColumnName,
+                    DataType = col.DataType.ToString(),
+                    IsNumeric = IsNumericType(col.DataType),
+                    FormatType = sqlField.Contains("__jsonc__") ? "Json" : (sqlField.Contains(" FROM ") ? "Csv" : ""),
+                    IsPivotField = sqlField.Contains("__ AS") ? true : false
+                });
+
+                col.ColumnName = col.ColumnName.Replace("__jsonc__", "");
+            }
+
+            var sanitizer = new Ganss.Xss.HtmlSanitizer
+            {
+                AllowedSchemes = { "data" }, // allow base64 images
+                AllowedTags = { "b", "i", "u", "p", "span", "div", "img", "table", "tr", "td" },
+                AllowedAttributes = { "style", "class", "src", "alt", "width", "height" }
+            };
+
+            foreach (DataRow row in dt.Rows)
+            {
+                i = 0;
+                var items = new List<DotNetReportDataRowItemModel>();
+
+                foreach (DataColumn col in dt.Columns)
+                {
+                    if (!col.ColumnName.Contains("__prm__"))
+                    {
+                        try
+                        {
+                            var rawValue = row[col] != null && row[col] != DBNull.Value ? row[col] : null;
+                            // Use ISO 8601 for dates so JavaScript can parse unambiguously regardless of server culture
+                            string valueStr;
+                            if (rawValue is DateTime dtVal)
+                                valueStr = dtVal.ToString("yyyy-MM-ddTHH:mm:ss");
+                            else
+                                valueStr = rawValue?.ToString();
+
+                            var item = new DotNetReportDataRowItemModel
+                            {
+                                Column = model.Columns[i],
+                                Value = sanitizer.Sanitize(valueStr),
+                                FormattedValue = sanitizer.Sanitize(GetFormattedValue(col, row, model.Columns[i].FormatType, jsonAsTable)),
+                                LabelValue = sanitizer.Sanitize(GetLabelValue(col, row))
+                            };
+
+                            items.Add(item);
+                        }
+                        catch (Exception ex)
+                        {
+                            //throw ex;
+                        }
+                    }
+                    i += 1;
+                }
+
+                model.Rows.Add(new DotNetReportDataRowModel
+                {
+                    Items = items.ToArray()
+                });
+            }
+
+            return model;
+        }
+
+        private static string GetWhereClause(string sql)
+        {
+
+            int whereIndex = sql.LastIndexOf("WHERE ", StringComparison.OrdinalIgnoreCase);
+            // If there is no WHERE clause, return an empty string
+            if (whereIndex < 0)
+            {
+                return "";
+            }
+            int nextClauseIndex = sql.IndexOf("GROUP BY ", whereIndex, StringComparison.OrdinalIgnoreCase);
+            if (nextClauseIndex < 0)
+            {
+                nextClauseIndex = sql.IndexOf("ORDER BY ", whereIndex, StringComparison.OrdinalIgnoreCase);
+            }
+            nextClauseIndex = nextClauseIndex < 0 ? sql.Length : nextClauseIndex;
+            var modifiedSql = sql.Substring(0, whereIndex) + sql.Substring(nextClauseIndex);
+            var whereClause = sql.Substring(whereIndex, nextClauseIndex - whereIndex);
+
+            if (whereClause.Contains(" ON ") && whereClause.Contains("\""))
+            {
+                whereClause = "";
+            }
+
+            return whereClause;
+        }
+
+        private static string ReplaceWhereClause(string sql, string where)
+        {
+            int whereIndex = sql.IndexOf("WHERE ", StringComparison.OrdinalIgnoreCase);
+            int nextClauseIndex = sql.IndexOf("ORDER BY ", whereIndex, StringComparison.OrdinalIgnoreCase);
+            nextClauseIndex = nextClauseIndex < 0 ? sql.Length : nextClauseIndex;
+            var modifiedSql = sql.Substring(0, whereIndex) + where + sql.Substring(nextClauseIndex);
+            return modifiedSql;
+        }
+        
+        public async static Task<(DataTable dt, string sql, int totalRecords, List<List<string>> headerRows)>
+        GetPivotTable(
+            IDatabaseConnection databaseConnection,
+            string connectionString,
+            DataTable dt,
+            string sql,
+            List<string> sqlFields,
+            string reportDataJson,
+            string pivotColumnList,
+            string pivotFunction,
+            int pageNumber,
+            int pageSize,
+            string sortBy,
+            bool desc,
+            bool returnSubtotal = false,
+            bool includeColumnTotals = false,
+            bool includeRowTotals = false,
+            List<KeyValuePair<string, string>> parameters = null)
+        {
+            var dts = new DataTable();
+            if (dt.Rows.Count == 0)
+                return (dts, "", 0, new List<List<string>>());
+            
+            var pivotColumns = pivotColumnList.Split(',')
+                .Select(pc => pc.Trim())
+                .Where(pc => !string.IsNullOrWhiteSpace(pc))
+                .ToList();
+
+            if (pivotColumns.Count == 0)
+                throw new Exception("Pivot requires at least one pivot column.");
+
+            string pivotColumn = pivotColumns.Last();
+
+            var pivotColumnOrder = GetPivotColumnOrder(reportDataJson);
+
+            // Build drilldown SQL
+            var drilldownRow = new List<string>();
+            var dr = dt.Rows[0];
+            var k = 0;
+            foreach (DataColumn dc in dt.Columns)
+            {
+                var col = sqlFields[k++]; //columns.FirstOrDefault(x => x.fieldName == dc.ColumnName) ?? new ReportHeaderColumn();
+                drilldownRow.Add($@"
+                    {{
+                        ""Value"":""{dr[dc]}"",
+                        ""FormattedValue"":""{dr[dc]}"",
+                        ""LabelValue"":""'{dr[dc]}'"",
+                        ""NumericValue"":null,
+                        ""Column"":{{
+                            ""SqlField"":""{col.Substring(0, col.LastIndexOf(" AS "))}"",
+                            ""ColumnName"":""{dc.ColumnName}"",
+                            ""DataType"":""{dc.DataType.ToString()}"",
+                            ""IsNumeric"":{(dc.DataType.Name.StartsWith("Int") || dc.DataType.Name == "Double" || dc.DataType.Name == "Decimal" ? "true" : "false")},
+                            ""FormatType"":""""
+                        }}
+                    }}
+                ");
+            }
+
+            var reportData = reportDataJson.Replace("\"DrillDownRow\":[]", $"\"DrillDownRow\": [{string.Join(",", drilldownRow)}]").Replace("\"IsAggregateReport\":true", "\"IsAggregateReport\":false,\"IsPivotMode\":true");
+            var drilldownSql = await RunReportApiCall(reportData);
+
+            if (string.IsNullOrEmpty(drilldownSql))
+                return (dts, "", 0, new List<List<string>>());
+
+            var lastWhereIndex = drilldownSql.LastIndexOf("WHERE");
+            var baseQuery = lastWhereIndex > 0 
+                ? drilldownSql.Substring(0, lastWhereIndex) + " " + GetWhereClause(sql)
+                : drilldownSql + " " + GetWhereClause(sql);
+
+            var baseDataTable = databaseConnection.ExecuteQuery(connectionString, baseQuery, parameters);
+
+            var monthNames = new List<string>
+            {
+                "january","february","march","april","may","june",
+                "july","august","september","october","november","december"
+            };
+
+            var distinctValues = baseDataTable
+                .AsEnumerable()
+                .Select(row => "[" + Convert.ToString(row[pivotColumn])?.Trim() + "]")
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .Where(x => x != "[]" && x.Length <= 128)
+                .OrderBy(x =>
+                {
+                    string trimmed = x.Trim('[', ']').ToLower();
+                    int idx = monthNames.IndexOf(trimmed);
+                    return idx >= 0 ? idx : int.MaxValue;
+                })
+                .ThenBy(x => x)
+                .ToList();
+
+            distinctValues = (pivotColumnOrder.Count == distinctValues.Count &&
+                              !pivotColumnOrder.Except(distinctValues).Any())
+                             ? pivotColumnOrder
+                             : distinctValues;
+
+
+            int pivotColumnIndex = baseDataTable.Columns[pivotColumn].Ordinal;
+            string nextColumnName = baseDataTable.Columns[pivotColumnIndex + 1].ColumnName;
+
+            var validFunctions = new[] { "Sum", "Count", "Avg" };
+            pivotFunction = validFunctions.Contains(pivotFunction) ? pivotFunction : "Max";
+
+            int firstAggIndex = sqlFields.FindIndex(f =>
+            {
+                var u = f.ToUpperInvariant();
+                return u.Contains("COUNT(") ||
+                       u.Contains("COUNT DISTINCT(") ||
+                       u.Contains("SUM(") ||
+                       u.Contains("AVG(") ||
+                       u.Contains("MIN(") ||
+                       u.Contains("MAX(");
+            });
+
+            if (returnSubtotal)
+            {
+                var sqlQryforCount = $@"
+                    SELECT 
+                        {string.Join(", ", distinctValues.Select(v => $"SUM(COALESCE({v}, 0)) AS {v}"))}
+                    FROM (
+                        {baseQuery}
+                    ) src
+                    PIVOT (
+                        COUNT([{nextColumnName}]) 
+                        FOR [{pivotColumn}] IN ({string.Join(", ", distinctValues)})
+                    ) AS pvt;
+                ";
+
+                var countdata = databaseConnection.ExecuteQuery(connectionString, sqlQryforCount, parameters);
+                return (countdata, sqlQryforCount, 1, new List<List<string>>());
+            }
+
+            string finalPivotSql;
+            if (firstAggIndex < 0)
+            {
+                finalPivotSql = $@"
+                    SELECT * FROM (
+                        {baseQuery}
+                    ) src
+                    PIVOT (
+                        {pivotFunction} ([{nextColumnName}])
+                        FOR [{pivotColumn}] IN ({string.Join(", ", distinctValues)})
+                    ) AS pvt";
+            }
+            else
+            {
+            var rowFields = sqlFields.Take(firstAggIndex).ToList();
+            var measureFields = sqlFields.Skip(firstAggIndex).ToList();
+
+            // Extract row-field aliases only
+            var rowFieldAliases = rowFields.Select(r =>
+            {
+                var parts = r.Split(new[] { " AS " }, StringSplitOptions.RemoveEmptyEntries);
+                return parts.Last().Trim().Trim('[', ']');
+            }).ToList();
+
+
+            List<(string AggFunc, string Alias)> measures =
+                new List<(string AggFunc, string Alias)>();
+
+            foreach (var mf in measureFields)
+            {
+                var u = mf.ToUpperInvariant();
+                int asPos = u.LastIndexOf(" AS ");
+
+                string alias = mf.Substring(asPos + 4).Trim().Trim('[', ']');
+
+                int paren = u.IndexOf("(");
+                string func = paren >=0 ? u.Substring(0, paren).Trim() : "MAX"; // COUNT, SUM, etc.
+
+                measures.Add((func, alias));
+            }
+
+            var measureAliases = measures.Select(m => m.Alias).ToList();
+
+            string BuildInnerSelect(string measureAlias)
+            {
+                var projected = new List<string>();
+
+                // aliases of row fields only
+                foreach (var rf in rowFields)
+                {
+                    var parts = rf.ToUpperInvariant().Split(new[] { " AS " }, StringSplitOptions.RemoveEmptyEntries);
+                    string alias = parts.Last().Trim().Trim('[', ']');
+                    projected.Add($"[{alias}]");
+                }
+
+                // pivot axis column
+                projected.Add($"[{pivotColumn}]");
+
+                // measure (already a projected column alias)
+                projected.Add($"[{measureAlias}]");
+
+                return $@"
+                    SELECT {string.Join(", ", projected)}
+                    FROM ({baseQuery}) AS src
+                ";
+            }
+
+            List<string> pivotSubqueries = new List<string>();
+
+            foreach (var m in measures)
+            {
+                string innerSelect = BuildInnerSelect(m.Alias);
+
+                string pivot = $@"
+                    SELECT *
+                    FROM (
+                        {innerSelect}
+                    ) AS x
+                    PIVOT
+                    (
+                        {m.AggFunc} ([{m.Alias}])
+                        FOR [{pivotColumn}] IN ({string.Join(", ", distinctValues)})
+                    ) AS pvt
+                ";
+
+                pivotSubqueries.Add(pivot);
+            }
+
+            StringBuilder selectBuilder = new StringBuilder();
+
+            // row fields
+            foreach (var alias in rowFieldAliases)
+            {
+                selectBuilder.AppendLine($"t0.[{alias}],");
+            }
+
+            // pivot columns (distinctValues) × measures
+            foreach (string dv in distinctValues)
+            {
+                string cleanDv = dv.Trim('[', ']');
+
+                for (int m = 0; m < measureAliases.Count; m++)
+                {
+                    string measure = measureAliases[m];
+                    selectBuilder.AppendLine($"t{m}.[{cleanDv}] AS [{cleanDv}|{measure}],");
+                }
+            }
+
+            string selectList = selectBuilder.ToString().TrimEnd(',', '\r', '\n');
+
+            StringBuilder fromBuilder = new StringBuilder();
+
+            // first pivot
+            fromBuilder.AppendLine($"FROM ({pivotSubqueries[0]}) t0");
+
+            // join others
+            for (int i = 1; i < pivotSubqueries.Count; i++)
+            {
+                string alias = $"t{i}";
+                string sub = pivotSubqueries[i].Replace(" AS pvt", $" AS {alias}");
+
+                string joinCond = string.Join(" AND ",
+                    rowFieldAliases.Select(col => $"t0.[{col}] = {alias}.[{col}]")
+                );
+
+                fromBuilder.AppendLine($"INNER JOIN ({sub}) {alias} ON {joinCond}");
+            }
+
+            string fromSql = fromBuilder.ToString();
+
+            finalPivotSql = $@"
+                SELECT
+                {selectList}
+                {fromSql}
+                ";
+            }
+
+            var sqlQry = $@"
+                SELECT * FROM (
+                    {baseQuery}
+                ) src
+                PIVOT (
+                    {pivotFunction} ([{nextColumnName}])
+                    FOR [{pivotColumn}] IN ({string.Join(", ", distinctValues)})
+                ) AS pvt
+            ";
+
+            var sqlCount = $"SELECT COUNT(*) FROM ({sqlQry}) as countQry";
+            var totalRecords = databaseConnection.GetTotalRecords(connectionString, sqlCount, finalPivotSql);
+
+            sqlQry += "\r\n" +
+                $" ORDER BY 1 {(desc ? "DESC" : "")} \r\n" +
+                $" OFFSET {(pageNumber - 1) * pageSize} ROWS FETCH NEXT {pageSize} ROWS ONLY";
+
+            try
+            {
+                dts = databaseConnection.ExecuteQuery(connectionString, finalPivotSql, parameters);
+            }
+            catch (Exception ex)
+            {
+                throw new Exception($"{ex.Message}\r\n\r\n-- Generated Pivot SQL --\r\n{finalPivotSql}", ex);
+            }
+
+            var headerRows = new List<List<string>>();
+            int levels = pivotColumns.Count;
+
+            // Initialize header rows
+            for (int lvl = 0; lvl < levels; lvl++)
+                headerRows.Add(new List<string>());
+
+            // Convert pivot values into multi-level headers
+            foreach (var dv in distinctValues)
+            {
+                string pivotVal = dv.Trim('[', ']');
+
+                var match = baseDataTable.AsEnumerable()
+                    .FirstOrDefault(r => Convert.ToString(r[pivotColumn])?.Trim() == pivotVal);
+
+                if (match == null)
+                {
+                    for (int lvl = 0; lvl < levels; lvl++)
+                        headerRows[lvl].Add("");
+                    continue;
+                }
+
+                for (int lvl = 0; lvl < levels; lvl++)
+                {
+                    string colName = pivotColumns[lvl];
+                    headerRows[lvl].Add(Convert.ToString(match[colName]));
+                }
+            }
+
+            var pivotLeafCols = dts.Columns.Cast<DataColumn>()
+                .Where(c => c.ColumnName.Contains("|"))
+                .ToList();
+
+            var pivotMeasures = pivotLeafCols
+                .Select(c => c.ColumnName.Split('|').Last())
+                .Distinct()
+                .ToList();
+
+            if (includeColumnTotals)
+            {
+                foreach (var m in pivotMeasures)
+                {
+                    string totalCol = $"Total|{m}";
+                    if (!dts.Columns.Contains(totalCol))
+                        dts.Columns.Add(totalCol, typeof(decimal));
+                }
+
+                foreach (DataRow row in dts.Rows)
+                {
+                    foreach (var m in pivotMeasures)
+                    {
+                        string totalCol = $"Total|{m}";
+                        var cols = pivotLeafCols.Where(c => c.ColumnName.EndsWith("|" + m));
+                        decimal sum = 0;
+                        foreach (var c in cols)
+                            sum += decimal.TryParse(row[c]?.ToString(), out var v) ? v : 0;
+                        row[totalCol] = sum;
+                    }
+                }
+            }
+
+            if (includeRowTotals)
+            {
+                var grand = dts.NewRow();
+
+                foreach (var col in pivotLeafCols)
+                {
+                    decimal total = 0;
+                    foreach (DataRow r in dts.Rows)
+                        total += decimal.TryParse(r[col]?.ToString(), out var v) ? v : 0;
+                    grand[col.ColumnName] = total;
+                }
+
+                if (includeColumnTotals)
+                {
+                    foreach (var m in pivotMeasures)
+                    {
+                        string totalCol = $"Total|{m}";
+                        decimal total = 0;
+                        foreach (DataRow r in dts.Rows)
+                            total += decimal.TryParse(r[totalCol]?.ToString(), out var v) ? v : 0;
+                        grand[totalCol] = total;
+                    }
+                }
+
+                dts.Rows.Add(grand);
+            }
+
+            return (dts, finalPivotSql, totalRecords, headerRows);
+        }
+
+        public async static Task<DataSet> GetDrillDownDataAlternate(IDatabaseConnection databaseConnection, string connectionString, DataTable dt, List<string> sqlFields, string reportDataJson)
+        {
+            var drilldownRow = new StringBuilder();
+            var dr = dt.Rows[0];
+            int i = 0;
+
+            foreach (DataColumn dc in dt.Columns)
+            {
+                var col = sqlFields[i++];
+                var formattedCol = col.Substring(0, col.LastIndexOf(" AS "));
+
+                if (drilldownRow.Length > 0) drilldownRow.Append(',');
+
+                drilldownRow.Append($@"
+                            {{
+                                ""Value"":""{dr[dc]}"",
+                                ""FormattedValue"":""{dr[dc]}"",
+                                ""LabelValue"":""'{dr[dc]}'"",
+                                ""NumericValue"":null,
+                                ""Column"":{{
+                                    ""SqlField"":""{formattedCol}"",
+                                    ""ColumnName"":""{dc.ColumnName}"",
+                                    ""DataType"":""{dc.DataType}"",
+                                    ""IsNumeric"":{(dc.DataType.Name.StartsWith("Int") || dc.DataType.Name == "Double" || dc.DataType.Name == "Decimal" ? "true" : "false")},
+                                    ""FormatType"":""""
+                                }}
+                             }}
+                        ");
+            }
+
+            var reportData = reportDataJson
+                .Replace("\"DrillDownRow\":[]", $"\"DrillDownRow\": [{drilldownRow.ToString()}]")
+                .Replace("\"IsAggregateReport\":true", "\"IsAggregateReport\":false");
+
+            var drilldownSql = await RunReportApiCall(reportData);
+            var combinedSqls = new StringBuilder();
+
+            if (!string.IsNullOrEmpty(drilldownSql))
+            {
+                foreach (DataRow ddr in dt.Rows)
+                {
+                    i = 0;
+                    var filteredSql = drilldownSql;
+                    foreach (DataColumn dc in dt.Columns)
+                    {
+                        var value = ddr[dc].ToString().Replace("'", "''");
+                        filteredSql = filteredSql.Replace($"<{dc.ColumnName}>", value);
+                    }
+
+                    combinedSqls.AppendLine(filteredSql + ";");
+                }
+
+                return databaseConnection.ExecuteDataSetQuery(connectionString, combinedSqls.ToString());
+            }
+
+            return new DataSet();
+        }
+
+        public async static Task<DataSet> GetDrillDownData(IDatabaseConnection databaseConnection, string connectionString, DataTable dt, List<string> sqlFields, string reportDataJson, List<KeyValuePair<string, string>> parameters = null)
+        {
+            var drilldownRow = new List<string>();
+            if (dt.Rows.Count == 0) return new DataSet();
+            var dr = dt.Rows[0];
+            int i = 0;
+            foreach (DataColumn dc in dt.Columns)
+            {
+                var col = sqlFields[i++]; //columns.FirstOrDefault(x => x.fieldName == dc.ColumnName) ?? new ReportHeaderColumn();
+                drilldownRow.Add($@"
+                                    {{
+                                        ""Value"":""{dr[dc]}"",
+                                        ""FormattedValue"":""{dr[dc]}"",
+                                        ""LabelValue"":""'{dr[dc]}'"",
+                                        ""NumericValue"":null,
+                                        ""Column"":{{
+                                            ""SqlField"":""{col.Substring(0, col.LastIndexOf(" AS "))}"",
+                                            ""ColumnName"":""{dc.ColumnName}"",
+                                            ""DataType"":""{dc.DataType.ToString()}"",
+                                            ""IsNumeric"":{(dc.DataType.Name.StartsWith("Int") || dc.DataType.Name == "Double" || dc.DataType.Name == "Decimal" ? "true" : "false")},
+                                            ""FormatType"":""""
+                                        }}
+                                     }}
+                                ");
+            }
+
+            var reportData = reportDataJson.Replace("\"DrillDownRow\":[]", $"\"DrillDownRow\": [{string.Join(",", drilldownRow)}]").Replace("\"IsAggregateReport\":true", "\"IsAggregateReport\":false,\"IsPivotMode\":true");
+            var drilldownSql = await RunReportApiCall(reportData);
+
+            var dts = new DataSet();
+            var combinedSqls = "";
+            if (!string.IsNullOrEmpty(drilldownSql))
+            {
+                foreach (DataRow ddr in dt.Rows)
+                {
+                    i = 0;
+                    var filteredSql = drilldownSql;
+                    foreach (DataColumn dc in dt.Columns)
+                    {
+                        var value = ddr[dc].ToString().Replace("'", "''");
+                        filteredSql = filteredSql.Replace($"<{dc.ColumnName}>", value);
+                    }
+
+                    combinedSqls += filteredSql += ";\n";
+                }
+
+                dts = databaseConnection.ExecuteDataSetQuery(connectionString, combinedSqls, parameters);
+            }
+
+            return dts;
+        }
+
+        private static int CompareValues(object value1, object value2, Type dtType)
+        {
+            bool isInt = dtType == typeof(int) || dtType == typeof(long) || dtType == typeof(Int16) || dtType == typeof(Int32);
+            bool isDecimal = dtType == typeof(decimal) || dtType == typeof(double) || dtType == typeof(float);
+
+            if (value2 == null) { return 1; }
+            if (value1 == null) { return -1; }
+
+            if (dtType == typeof(DateTime))
+            {
+                DateTime date1 = Convert.ToDateTime(value1);
+                DateTime date2 = Convert.ToDateTime(value2);
+                return DateTime.Compare(date1, date2);
+            }
+            else if (isInt || isDecimal)
+            {
+                double dblValue1 = Convert.ToDouble(value1);
+                double dblValue2 = Convert.ToDouble(value2);
+                return dblValue1.CompareTo(dblValue2);
+            }
+            return value1.ToString().CompareTo(value2.ToString());
+        }
+
+        public static async Task<DataTable> ExecuteCustomFunction(DataTable dataTable, string sql)
+        {
+            if (!sql.Contains("/*|")) return dataTable;
+
+            Regex regex = new Regex(@"/\*\|(.*?)\|\*/[^,]+AS\s+\[([^\]]+)\]");
+            var matches = regex.Matches(sql);
+            
+            object result = "";
+            
+            foreach (Match match in matches)
+            {
+                string functionCall = match.Groups[1].Value;
+                string columnName = match.Groups[2].Value;
+                int columnIndex = -1;
+
+                // Find the column that contains the function call to replace it later
+                foreach (DataColumn column in dataTable.Columns)
+                {
+                    if (column.ColumnName.Equals(columnName))
+                    {
+                        columnIndex = column.Ordinal;
+                        break;
+                    }
+                }
+
+                var functionCalls = new List<string>();
+                foreach (DataRow row in dataTable.Rows)
+                {
+                    try
+                    {
+                        string modifiedFunctionCall = functionCall;
+
+                        // Iterate over all columns that end with "__prm__"
+                        foreach (DataColumn column in dataTable.Columns.Cast<DataColumn>().Where(c => c.ColumnName.EndsWith("__prm__")))
+                        {
+                            string paramName = "{" + column.ColumnName.Replace("__prm__", "") + "}";
+
+                            if (modifiedFunctionCall.Contains(paramName))
+                            {
+                                string valueReplacement = row[column].ToString();
+                                // Check if the datatype is numeric
+                                if (column.DataType == typeof(int) || column.DataType == typeof(decimal) || column.DataType == typeof(double) || column.DataType == typeof(long))
+                                {
+                                    modifiedFunctionCall = modifiedFunctionCall.Replace(paramName, valueReplacement);
+                                }
+                                else
+                                {
+                                    modifiedFunctionCall = modifiedFunctionCall.Replace(paramName, "\"" + valueReplacement + "\"");
+                                }
+                            }
+                        }
+
+                        //result = DynamicCodeRunner.RunCode(modifiedFunctionCall + ";");
+                    }
+                    catch (Exception ex)
+                    {
+                        result = ex.Message;
+                    }
+                    if (columnIndex != -1)
+                    {
+                        dataTable.Columns[columnIndex].ReadOnly = false;
+                        row[columnIndex] = result;
+                    }
+                }
+            }
+
+            foreach (var column in dataTable.Columns.Cast<DataColumn>().Where(c => c.ColumnName.EndsWith("__prm__")).ToList())
+            {
+                dataTable.Columns.Remove(column);
+            }
+            return dataTable;
+        }
+        public static List<string> GetPivotColumnOrder(string reportDataJson)
+        {
+            var desiredOrder = new List<string>();
+
+            if (!string.IsNullOrEmpty(reportDataJson))
+            {
+                JObject reportSettingObject = JObject.Parse(reportDataJson);
+                var reportSettingsObject = (string)reportSettingObject["ReportSettings"];
+                if (reportSettingsObject != null)
+                {
+                    JObject pivotColumnsObject = JObject.Parse(reportSettingsObject);
+                    string pivotColumnOrder = (string)pivotColumnsObject["PivotColumns"]?.ToString();
+                    if (!string.IsNullOrEmpty(pivotColumnOrder))
+                    {
+                        desiredOrder = pivotColumnOrder.Split(',').Select(c => c.Trim()).ToList();
+                    }
+                }
+            }
+
+            return desiredOrder;
+        }
+        public static List<string> GetuseAltPivotColumnOrder(string reportDataJson)
+        {
+            var desiredOrder = new List<string>();
+            if (!string.IsNullOrEmpty(reportDataJson))
+            {
+                JObject reportSettingObject = JObject.Parse(reportDataJson);
+                var reportSettingsObject = (string)reportSettingObject["ReportSettings"];
+
+                if (!string.IsNullOrEmpty(reportSettingsObject))
+                {
+                    JObject pivotColumnsObject = JObject.Parse(reportSettingsObject);
+                    var pivotColumnsArray = pivotColumnsObject["PivotColumnsWidth"] as JArray;
+                    if (pivotColumnsArray != null)
+                    {
+                        foreach (var column in pivotColumnsArray)
+                        {
+                            string fieldName = column["FieldName"]?.ToString();
+                            if (!string.IsNullOrEmpty(fieldName))
+                            {
+                                desiredOrder.Add(fieldName);
+                            }
+                        }
+                    }
+                }
+            }
+            return desiredOrder;
+        }
+        public static DataTable ReorderDataTableColumns(DataTable originalTable, List<string> desiredColumnOrder)
+        {
+            var reorderedTable = new DataTable();
+            foreach (var columnName in desiredColumnOrder)
+            {
+                if (originalTable.Columns.Contains(columnName))
+                {
+                    reorderedTable.Columns.Add(columnName, originalTable.Columns[columnName].DataType);
+                }
+            }
+            foreach (DataColumn col in originalTable.Columns)
+            {
+                if (!reorderedTable.Columns.Contains(col.ColumnName))
+                {
+                    reorderedTable.Columns.Add(col.ColumnName, col.DataType);
+                }
+            }
+            foreach (DataRow row in originalTable.Rows)
+            {
+                var newRow = reorderedTable.NewRow();
+                foreach (DataColumn col in reorderedTable.Columns)
+                {
+                    newRow[col.ColumnName] = row[col.ColumnName];
+                }
+                reorderedTable.Rows.Add(newRow);
+            }
+            return reorderedTable;
+        }
+        static List<dynamic> GetGroupFunctionList(string jsonString)
+        {
+            if (string.IsNullOrEmpty(jsonString))
+                return null;
+            JObject jsonObject;
+            try
+            {
+                jsonObject = JObject.Parse(jsonString);
+                var filteredList = new List<object>();
+
+                foreach (var item in jsonObject["GroupFunctionList"])
+                {
+                    filteredList.Add(new
+                    {
+                        FieldID = (int)item["FieldID"],
+                        CustomLabel = (string)item["CustomLabel"]
+                    });
+                }
+                return filteredList;
+            }
+            catch
+            {
+                return null;
+            }
+        }
+        static bool ContainsGroupInDetail(string jsonString)
+        {
+            if (string.IsNullOrEmpty(jsonString))
+                return false;
+            JObject jsonObject;
+            try
+            {
+                jsonObject = JObject.Parse(jsonString);
+            }
+            catch
+            {
+                return false;
+            }
+            if (jsonObject["GroupFunctionList"] == null)
+                return false;
+            JArray groupFunctionList = jsonObject["GroupFunctionList"] as JArray;
+            if (groupFunctionList == null || !groupFunctionList.Any())
+                return false;
+            return groupFunctionList.Any(item =>
+                item?["GroupFunc"]?.ToString() == "Group in Detail"
+            );
+        }
+
+        public static DataTable PushDatasetIntoDataTable(DataTable tbl, DataSet dts, string pivotColumnName, string pivotFunction, string reportDataJson=null)
+        {
+            var dt = tbl.Copy();
+            
+            if (!string.IsNullOrEmpty(reportDataJson))
+            {
+                var desiredOrder = new List<string>();
+                JObject reportSettingObject = JObject.Parse(reportDataJson);
+                var reportSettingsObject = (string)reportSettingObject["ReportSettings"];
+                if (reportSettingsObject != null)
+                {
+                    JObject pivotColumnsObject = JObject.Parse(reportSettingsObject);
+                    string pivotColumnOrder = (string)pivotColumnsObject["PivotColumns"]?.ToString();
+                    if (!string.IsNullOrEmpty(pivotColumnOrder))
+                    {
+                        var pivotColumns = pivotColumnOrder.Split(',').ToList();
+                        desiredOrder.AddRange(pivotColumns);
+                        if(desiredOrder.Count == dts.Tables.Count)
+                        {
+                            // Reorder each DataTable in the DataSet
+                            List<DataTable> reorderedTables = new List<DataTable>();
+                            foreach (var name in desiredOrder)
+                            {
+                                foreach (DataTable table in dts.Tables)
+                                {
+                                    if (table.Rows.Count > 0 && table.Rows[0][1].ToString().Trim() == name.Trim())
+                                    {
+                                        reorderedTables.Add(table.Copy());
+                                        break;
+                                    }
+                                }
+                            }
+                            // Clear the existing tables in the DataSet and add reordered ones
+                            dts.Tables.Clear();
+                            foreach (var table in reorderedTables)
+                            {
+                                dts.Tables.Add(table);
+                            }
+                        }
+                    }
+                }
+            }
+
+            foreach (DataRow row in dt.Rows)
+            {
+                int rowIndex = dt.Rows.IndexOf(row);
+                // One result set is expected, otherwise skip row 
+                if (rowIndex >= dts.Tables.Count) continue;
+                DataTable dtsTable = dts.Tables[rowIndex];
+                var distinctValues = new Dictionary<string, HashSet<object>>();
+                var maxValues = new Dictionary<string, object>();
+
+                if (dtsTable.Columns.Contains(pivotColumnName))
+                {
+                    int pivotColumnIndex = dtsTable.Columns[pivotColumnName].Ordinal;
+                    int dtColumnIndex = (pivotColumnIndex + 1 < dtsTable.Columns.Count) ? pivotColumnIndex + 1 : pivotColumnIndex;
+
+                    var dtType = dtsTable.Columns[dtColumnIndex].DataType;
+                    bool isInt = dtType == typeof(int) || dtType == typeof(long) || dtType == typeof(Int16) || dtType == typeof(Int32);
+                    bool isDecimal = dtType == typeof(decimal) ||dtType == typeof(double) ||dtType == typeof(float);
+                    bool isDate = dtType == typeof(DateTime);
+
+                    foreach (DataRow dtsRow in dtsTable.Rows)
+                    {
+                        string newColumnName = dtsRow[pivotColumnName].ToString();
+                        if (string.IsNullOrEmpty(newColumnName)) newColumnName = "(Blank)";
+                        if (!dt.Columns.Contains(newColumnName))
+                        {
+                            dt.Columns.Add(newColumnName, pivotFunction.StartsWith("Count") ? typeof(int) : dtType);
+                        }
+                        
+                        if (pivotFunction == "Count Distinct")
+                        {
+                            if (!distinctValues.ContainsKey(newColumnName))
+                            {
+                                distinctValues[newColumnName] = new HashSet<object>();
+                            }
+                            distinctValues[newColumnName].Add(dtsRow[dtColumnIndex]);
+                        }
+                        else if (pivotFunction == "Max")
+                        {
+                            object currentValue = dtsRow[dtColumnIndex];
+                            if (!maxValues.ContainsKey(newColumnName) || CompareValues(currentValue, maxValues[newColumnName], dtType) > 0)
+                            {
+                                maxValues[newColumnName] = currentValue;
+                            }
+                        }
+                        else if (pivotColumnIndex + 1 < dtsTable.Columns.Count)
+                        {
+                            if (pivotFunction == "Count")
+                            {
+                                row[newColumnName] = (string.IsNullOrEmpty(row[newColumnName].ToString()) ? 0 : Convert.ToInt32(row[newColumnName])) + 1;
+                            }
+                            else if (isInt)
+                            {
+                                row[newColumnName] = (string.IsNullOrEmpty(row[newColumnName].ToString()) ? 0 : Convert.ToInt32(row[newColumnName])) + (string.IsNullOrEmpty(dtsRow[pivotColumnIndex + 1].ToString()) ? 0 : Convert.ToInt32(dtsRow[pivotColumnIndex + 1]));
+
+                            }
+                            else if (isDecimal)
+                            {
+                                row[newColumnName] = (string.IsNullOrEmpty(row[newColumnName].ToString()) ? 0 : Convert.ToDecimal(row[newColumnName])) + (string.IsNullOrEmpty(dtsRow[pivotColumnIndex + 1].ToString()) ? 0 : Convert.ToDecimal(dtsRow[pivotColumnIndex + 1]));
+
+                            }
+                            else if (isDate)
+                            {
+                                row[newColumnName] = (string.IsNullOrEmpty(row[newColumnName].ToString()) ? "" : Convert.ToDateTime(row[newColumnName]).ToShortDateString()) + " " + (string.IsNullOrEmpty(dtsRow[pivotColumnIndex + 1].ToString()) ? "" : Convert.ToDateTime(dtsRow[pivotColumnIndex + 1]).ToShortDateString());
+                            }
+                            else
+                            {
+                                row[newColumnName] = row[newColumnName].ToString() + " " + dtsRow[pivotColumnIndex + 1].ToString();
+                            }
+                        }
+                    }
+
+                    if (pivotFunction == "Count Distinct")
+                    {
+                        foreach (var column in distinctValues)
+                        {
+                            row[column.Key] = column.Value.Count;
+                        }
+                    }
+                    if (pivotFunction == "Max")
+                    {
+                        foreach (var column in maxValues)
+                        {
+                            row[column.Key] = column.Value;
+                        }
+                    }
+                }
+            }
+            return dt;
+        }
+
+
+        private async static Task<(DataTable dt, SqlQuery qry, List<string> sqlFields)> GetDataTable(string reportSql, string connectKey)
+        {
+            var qry = new SqlQuery();
+            var sql = Decrypt(reportSql);
+            if (sql.StartsWith("{\"sql\""))
+            {
+                qry = JsonConvert.DeserializeObject<SqlQuery>(sql);
+                sql = qry.sql;
+                if (!string.IsNullOrEmpty(qry.dbType)) dbtype = qry.dbType;
+            }
+            else
+            {
+                qry.sql = sql;
+            }
+            var sqlFields = SplitSqlColumns(sql);
+
+            // Execute sql
+            var connectionString = DotNetReportHelper.GetConnectionString(connectKey);
+            IDatabaseConnection databaseConnection = DatabaseConnectionFactory.GetConnection(dbtype);
+            var dt = databaseConnection.ExecuteQuery(connectionString, sql, qry.parameters);
+            dt = await DotNetReportHelper.ExecuteCustomFunction(dt, sql);
+
+            return (dt, qry, sqlFields);
+        }
+
+        /// <summary>
+        /// Runs a saved data-driven query and returns its full result set. Callers pick the columns
+        /// they need, so the same stored query can feed recipient lists today and user, role or
+        /// client lists later without changing this contract.
+        /// </summary>
+        public static async Task<DataTable> GetDataDrivenQueryRows(string encryptedSql, string connectKey)
+        {
+            var sql = Decrypt(encryptedSql);
+            if (!IsReadOnlySelectSql(sql, out var reason))
+                throw new Exception("Query rejected: " + reason);
+
+            var connectionString = GetConnectionString(connectKey);
+            IDatabaseConnection databaseConnection = DatabaseConnectionFactory.GetConnection(dbtype);
+            return await Task.Run(() => databaseConnection.ExecuteQuery(connectionString, sql));
+        }
+
+        /// <summary>
+        /// Picks the email addresses out of a data-driven query result. Prefers a column named Email,
+        /// otherwise the first column. Blanks, duplicates and anything without an @ are dropped so one
+        /// bad row cannot fail the whole run.
+        /// </summary>
+        public static List<string> ExtractEmailRecipients(DataTable dt)
+        {
+            var recipients = new List<string>();
+            if (dt == null || dt.Columns.Count == 0) return recipients;
+
+            var emailColumn = dt.Columns.Cast<DataColumn>()
+                .FirstOrDefault(c => string.Equals(c.ColumnName, "Email", StringComparison.OrdinalIgnoreCase))
+                ?? dt.Columns[0];
+
+            foreach (DataRow row in dt.Rows)
+            {
+                var value = row[emailColumn]?.ToString()?.Trim();
+                if (string.IsNullOrEmpty(value) || value.IndexOf('@') < 0) continue;
+                if (!recipients.Contains(value, StringComparer.OrdinalIgnoreCase)) recipients.Add(value);
+            }
+
+            return recipients;
+        }
+
+        private static decimal ComputeAggregateValue(string aggregate, IEnumerable<DataRow> rows, string columnName)
+        {
+            var rowList = rows.ToList();
+            var strValues = new List<string>();
+            var numValues = new List<decimal>();
+            foreach (var row in rowList)
+            {
+                try
+                {
+                    var val = row[columnName]?.ToString() ?? "";
+                    strValues.Add(val);
+                    if (decimal.TryParse(val, out decimal d)) numValues.Add(d);
+                }
+                catch { }
+            }
+            switch ((aggregate ?? "Sum").Trim())
+            {
+                case "Count":          return rowList.Count;
+                case "Count Distinct": return strValues.Distinct(StringComparer.OrdinalIgnoreCase).Count();
+                case "Average":        return numValues.Any() ? (decimal)numValues.Average() : 0;
+                case "Max":            return numValues.Any() ? numValues.Max() : 0;
+                case "Min":            return numValues.Any() ? numValues.Min() : 0;
+                default:               return numValues.Sum();
+            }
+        }
+
+        private static void WriteGroupedExcel(
+            DataTable dt,
+            ExcelWorksheet ws,
+            int rowstart,
+            int colstart,
+            List<ReportHeaderColumn> columns,
+            bool includeSubtotal,
+            bool includeGrandTotal,
+            bool loadHeader,
+            string chartData,
+            bool isSubReport,
+            bool subTotalPerGroup = false,
+            bool isFilterDetail = false,
+            bool isexpanded = false)
+        {
+            var outerGroupColumns = columns?
+                .Where(c => c.aggregateFunction == "Outer Group" || c.outerGroup)
+                .Select(c => c.fieldName)
+                .ToList() ?? new List<string>();
+
+            // Group headings use the column label when one is set, matching the browser and the headers.
+            var outerGroupLabels = columns?
+                .Where(c => c.aggregateFunction == "Outer Group" || c.outerGroup)
+                .GroupBy(c => c.fieldName)
+                .ToDictionary(g => g.Key, g => string.IsNullOrEmpty(g.First().fieldLabel) ? g.Key : g.First().fieldLabel)
+                ?? new Dictionary<string, string>();
+
+            if (!outerGroupColumns.Any())
+            {
+                FormatExcelSheet(dt, ws, rowstart, colstart, columns, includeGrandTotal, loadHeader, chartData, isexpanded, isSubReport, isFilterDetail);
+                return;
+            }
+
+            RemoveColumnsBySubstring(dt, "__prm__");
+
+            var nonGroupDtColumns = dt.Columns.Cast<DataColumn>()
+                .Where(dc => !outerGroupColumns.Contains(dc.ColumnName))
+                .ToList();
+            int nonGroupColCount = nonGroupDtColumns.Count;
+            int currentRow = rowstart;
+
+            if (loadHeader)
+            {
+                int colIdx = colstart;
+                foreach (var dc in nonGroupDtColumns)
+                {
+                    var fc = columns?.FirstOrDefault(c => c.fieldName == dc.ColumnName);
+                    string label = isSubReport && !string.IsNullOrEmpty(fc?.fieldLabel2) ? fc.fieldLabel2 : (fc?.fieldLabel ?? dc.ColumnName);
+                    ws.Cells[currentRow, colIdx].Value = label;
+                    ws.Cells[currentRow, colIdx].Style.Font.Bold = true;
+                    if (!string.IsNullOrEmpty(fc?.headerFontColor))
+                        ws.Cells[currentRow, colIdx].Style.Font.Color.SetColor(ColorTranslator.FromHtml(fc.headerFontColor));
+                    if (!string.IsNullOrEmpty(fc?.headerBackColor))
+                    {
+                        ws.Cells[currentRow, colIdx].Style.Fill.PatternType = OfficeOpenXml.Style.ExcelFillStyle.Solid;
+                        ws.Cells[currentRow, colIdx].Style.Fill.BackgroundColor.SetColor(ColorTranslator.FromHtml(fc.headerBackColor));
+                    }
+                    colIdx++;
+                }
+                currentRow++;
+            }
+
+            {
+                int colIdx = colstart;
+                foreach (var dc in nonGroupDtColumns)
+                {
+                    var fc = columns?.FirstOrDefault(c => c.fieldName == dc.ColumnName);
+                    string decFmt = new string('0', fc?.decimalPlacesDigit ?? 2);
+                    bool colIsNumeric = dc.DataType.Name.StartsWith("Int") || dc.DataType.Name == "Double" || dc.DataType.Name == "Decimal";
+
+                    if (dc.DataType == typeof(decimal) || fc?.fieldFormating == "Decimal")
+                        ws.Column(colIdx).Style.Numberformat.Format = "###,###,##0." + decFmt;
+                    if (dc.DataType == typeof(DateTime))
+                        ws.Column(colIdx).Style.Numberformat.Format = GetExcelDateFormat(fc);
+                    if (fc?.fieldFormating == "Currency")
+                        ws.Column(colIdx).Style.Numberformat.Format = (fc.currencySymbol ?? "$") + "###,###,##0." + decFmt;
+
+                    bool alignRight = fc?.fieldAlign == "Right" ||
+                        (colIsNumeric && (fc?.fieldAlign == "Auto" || string.IsNullOrEmpty(fc?.fieldAlign)));
+                    ws.Column(colIdx).Style.HorizontalAlignment = alignRight
+                        ? OfficeOpenXml.Style.ExcelHorizontalAlignment.Right
+                        : fc?.fieldAlign == "Center"
+                            ? OfficeOpenXml.Style.ExcelHorizontalAlignment.Center
+                            : OfficeOpenXml.Style.ExcelHorizontalAlignment.Left;
+
+                    colIdx++;
+                }
+            }
+
+            var sortedRows = dt.AsEnumerable()
+                .OrderBy(r => string.Join("|", outerGroupColumns.Select(gc => r[gc]?.ToString() ?? "")))
+                .ToList();
+
+            string lastGroupKey = null;
+            var groupRows = new List<DataRow>();
+            var allRows = new List<DataRow>();
+
+            void WriteSubTotalRow(IEnumerable<DataRow> rows, bool isGrandTotal)
+            {
+                int colIdx = colstart;
+                foreach (var dc in nonGroupDtColumns)
+                {
+                    var fc = columns?.FirstOrDefault(c => c.fieldName == dc.ColumnName);
+                    bool dontSub = fc?.dontSubTotal ?? false;
+                    bool colIsNumeric = dc.DataType.Name.StartsWith("Int") || dc.DataType.Name == "Double" ||
+                                       dc.DataType.Name == "Decimal" || fc?.isNumeric == true ||
+                                       fc?.fieldFormating == "Currency" || fc?.fieldFormating == "Decimal";
+
+                    if (!dontSub)
+                    {
+                        var agg = fc?.totalRowAggregate ?? "Sum";
+                        bool isCountAgg = agg == "Count" || agg == "Count Distinct";
+                        if (colIsNumeric || isCountAgg)
+                        {
+                            decimal val = ComputeAggregateValue(agg, rows, dc.ColumnName);
+                            ws.Cells[currentRow, colIdx].Value = val;
+                            ws.Cells[currentRow, colIdx].Style.Font.Bold = true;
+
+                            string decFmt = new string('0', fc?.decimalPlacesDigit ?? 2);
+                            if (fc?.fieldFormating == "Currency")
+                                ws.Cells[currentRow, colIdx].Style.Numberformat.Format = (fc.currencySymbol ?? "$") + "###,###,##0." + decFmt;
+                            else if (fc?.fieldFormating == "Decimal")
+                                ws.Cells[currentRow, colIdx].Style.Numberformat.Format = "###,###,##0." + decFmt;
+
+                            if (isGrandTotal)
+                            {
+                                ws.Cells[currentRow, colIdx].Style.Fill.PatternType = OfficeOpenXml.Style.ExcelFillStyle.Solid;
+                                ws.Cells[currentRow, colIdx].Style.Fill.BackgroundColor.SetColor(System.Drawing.Color.LightGray);
+                            }
+                        }
+                    }
+                    colIdx++;
+                }
+                currentRow++;
+            }
+
+            foreach (var row in sortedRows)
+            {
+                string groupKey = string.Join("|", outerGroupColumns.Select(gc => row[gc]?.ToString() ?? ""));
+                bool isNewGroup = groupKey != lastGroupKey;
+
+                if (isNewGroup)
+                {
+                    if (lastGroupKey != null && subTotalPerGroup && includeSubtotal)
+                        WriteSubTotalRow(groupRows, false);
+
+                    groupRows = new List<DataRow>();
+                    currentRow++;
+
+                    // Write group label row above the group's data rows (merged, highlighted)
+                    string groupLabel = string.Join("  |  ", outerGroupColumns.Select(gc => $"{(outerGroupLabels.ContainsKey(gc) ? outerGroupLabels[gc] : gc)} - {row[gc]?.ToString() ?? ""}"));
+                    ws.Cells[currentRow, colstart].Value = groupLabel;
+                    ws.Cells[currentRow, colstart].Style.Font.Bold = true;
+                    ws.Cells[currentRow, colstart].Style.HorizontalAlignment = OfficeOpenXml.Style.ExcelHorizontalAlignment.Left;
+                    if (nonGroupColCount > 1)
+                        ws.Cells[currentRow, colstart, currentRow, colstart + nonGroupColCount - 1].Merge = true;
+                    currentRow++;
+                }
+
+                int colIndex = colstart;
+                foreach (var dc in nonGroupDtColumns)
+                {
+                    ws.Cells[currentRow, colIndex].Value = row[dc];
+                    colIndex++;
+                }
+
+                groupRows.Add(row);
+                allRows.Add(row);
+                lastGroupKey = groupKey;
+                currentRow++;
+            }
+
+            // Last group subtotal
+            if (subTotalPerGroup && includeSubtotal && groupRows.Any())
+                WriteSubTotalRow(groupRows, false);
+
+            // Grand total across all rows (suppressed in table mode — written separately)
+            if (includeGrandTotal && allRows.Any())
+                WriteSubTotalRow(allRows, true);
+
+            ApplyColumnWidths(ws, colstart, dt.Columns.Count, columns);
+        }
+
+        public static async Task<byte[]> GetExcelFile(string reportSql, string connectKey, string reportName, string chartData = null, bool allExpanded = false,bool hasSubreports =false,
+                string expandSqls = null, List<ReportHeaderColumn> columns = null, bool includeSubtotal = false, bool pivot = false, string pivotColumn = null, string pivotFunction = null, List<ReportHeaderColumn> onlyAndGroupInDetailColumns = null, bool isSubReport = false, bool subTotalPerGroup = false, string totalRowFormat = "row", string filterDetailsText = null,
+                Func<int, int, bool, Task<string>> linkedReportResolver = null)
+        {
+            var connectionString = DotNetReportHelper.GetConnectionString(connectKey);
+            IDatabaseConnection databaseConnection = DatabaseConnectionFactory.GetConnection(dbtype);
+            var data = await GetDataTable(reportSql, connectKey);
+
+            var qry = data.qry;
+            var sqlFields = data.sqlFields;
+            var dt = data.dt;
+            bool isFilterDetail = false;
+            if (pivot) dt = Transpose(dt);
+
+            if (columns?.Count > 0)
+            {
+                foreach (var col in columns)
+                {
+                    if (dt.Columns.Contains(col.fieldName) && col.hideStoredProcColumn)
+                    {
+                        dt.Columns.Remove(col.fieldName);
+                    }
+                }
+            }
+            if (!string.IsNullOrEmpty(pivotColumn))
+            {
+                if (!useAltPivot)
+                {
+                    var pd = await DotNetReportHelper.GetPivotTable(databaseConnection, connectionString, dt, qry.sql, sqlFields, expandSqls, pivotColumn, pivotFunction, 1, int.MaxValue, null, false, parameters: qry.parameters);
+                    dt = pd.dt;
+                    if (!string.IsNullOrEmpty(pd.sql)) qry.sql = pd.sql;
+                    allExpanded = false;
+                }
+                else
+                {
+                    var ds = await DotNetReportHelper.GetDrillDownData(databaseConnection, connectionString, dt, sqlFields, expandSqls, qry.parameters);
+                    dt = DotNetReportHelper.PushDatasetIntoDataTable(dt, ds, pivotColumn, pivotFunction, expandSqls);
+                }
+            }
+
+            using (ExcelPackage xp = new ExcelPackage())
+            {
+                ExcelWorksheet ws = xp.Workbook.Worksheets.Add(reportName);
+
+                int rowstart = 1;
+                int colstart = 1;
+                int rowend = rowstart;
+                int colend = dt.Columns.Count;
+
+                ws.Cells[rowstart, colstart, rowend, colend].Merge = true;
+                ws.Cells[rowstart, colstart, rowend, colend].Value = reportName;
+                ws.Cells[rowstart, colstart, rowend, colend].Style.Font.Bold = true;
+                ws.Cells[rowstart, colstart, rowend, colend].Style.Font.Size = 14;
+
+                if (!string.IsNullOrEmpty(filterDetailsText))
+                {
+                    isFilterDetail = true;
+                    rowstart++;
+                    ws.Cells[rowstart, colstart, rowstart, colend].Merge = true;
+                    ws.Cells[rowstart, colstart].Value = "Filters: " + filterDetailsText;
+                    ws.Cells[rowstart, colstart].Style.Font.Italic = true;
+                    ws.Cells[rowstart, colstart].Style.Font.Size = 10;
+                    ws.Cells[rowstart, colstart].Style.Font.Color.SetColor(System.Drawing.Color.FromArgb(71, 84, 103));
+                }
+
+                rowstart += 2;
+                rowend = rowstart + dt.Rows.Count;
+
+                bool isTableMode = includeSubtotal && totalRowFormat == "table";
+                bool includeGrandTotal = includeSubtotal && !isTableMode;
+                WriteGroupedExcel(dt, ws, rowstart, colstart, columns, includeSubtotal, includeGrandTotal, true, chartData, isSubReport, subTotalPerGroup, isFilterDetail, allExpanded);
+                // ---- NEW: embed linked sub-reports directly under each parent row, drilldown-style ----
+                if (hasSubreports && linkedReportResolver != null && dt.Rows.Count > 0 && columns?.Count > 0)
+                {
+                    var linkedCols = columns.Where(c => c.LinkFieldItem?.LinksToReport == true 
+                                                      && c.LinkFieldItem.LinkedToReportId.HasValue
+                                                      && c.LinkFieldItem.SelectedFilterId.HasValue).ToList();
+                    if (linkedCols.Count > 0)
+                    {
+                        var perRowBlocks = new List<(int rowDataIndex, List<(ReportHeaderColumn col, string filterValue, DataTable subDt)> blocks)>();
+                        var blockLock = new object();
+                        foreach (var linkCol in linkedCols)
+                        {
+                            if (!dt.Columns.Contains(linkCol.fieldName)) continue;
+                            // Resolve the SQL template ONCE per linked column, not per row.
+                            var sqlTemplate = await linkedReportResolver(
+                                linkCol.LinkFieldItem.LinkedToReportId.Value,
+                                linkCol.LinkFieldItem.SelectedFilterId.Value,
+                                true); // resolver now returns a template with a token, see below
+                            if (string.IsNullOrEmpty(sqlTemplate)) continue;
+                            var subConnectionString = DotNetReportHelper.GetConnectionString(connectKey);
+                            IDatabaseConnection subDbConn = DatabaseConnectionFactory.GetConnection(dbtype);
+                            // De-dupe: many rows may share the same filter value — only query each distinct value once.
+                            var valueCache = new ConcurrentDictionary<string, DataTable>();
+                            var rowValues = new List<(int rowIndex, string value)>();
+                            for (int rowIdx = 0; rowIdx < dt.Rows.Count; rowIdx++)
+                            {
+                                var val = dt.Rows[rowIdx][linkCol.fieldName]?.ToString();
+                                if (!string.IsNullOrEmpty(val)) rowValues.Add((rowIdx, val));
+                            }
+                            var distinctValues = rowValues.Select(r => r.value).Distinct().ToList();
+                            // Run distinct queries with limited parallelism instead of one-at-a-time.
+                            var throttler = new SemaphoreSlim(5); // tune based on DB connection pool size
+                            var queryTasks = distinctValues.Select(async val =>
+                            {
+                                await throttler.WaitAsync();
+                                try
+                                {
+                                    var filteredSql = sqlTemplate.Replace(ReportConstants.SubReportValueToken, val.Replace("'", "''"));
+                                    DataTable subDt;
+                                    try { subDt = subDbConn.ExecuteQuery(subConnectionString, filteredSql); }
+                                    catch { subDt = null; }
+                                    valueCache[val] = subDt;
+                                }
+                                finally { throttler.Release(); }
+                            });
+                            await Task.WhenAll(queryTasks);
+                            foreach (var (rowIndex, value) in rowValues)
+                            {
+                                if (!valueCache.TryGetValue(value, out var subDt) || subDt == null || subDt.Rows.Count == 0) continue;
+                                lock (blockLock)
+                                {
+                                    var existing = perRowBlocks.FirstOrDefault(x => x.rowDataIndex == rowIndex);
+                                    if (existing.blocks == null)
+                                    {
+                                        perRowBlocks.Add((rowIndex, new List<(ReportHeaderColumn, string, DataTable)> { (linkCol, value, subDt) }));
+                                    }
+                                    else
+                                    {
+                                        existing.blocks.Add((linkCol, value, subDt));
+                                    }
+                                }
+                            }
+                        }
+                        // ---- insertion logic below is unchanged from before ----
+                        int dataRowStart = rowstart + 1;
+                        var ordered = perRowBlocks.OrderByDescending(x => x.rowDataIndex).ToList();
+                        foreach (var (rowIdx, blocks) in ordered)
+                        {
+                            int parentRow = dataRowStart + rowIdx;
+                            int insertAt = parentRow + 1;
+                            for (int b = blocks.Count - 1; b >= 0; b--)
+                            {
+                                var (linkCol, filterValue, subDt) = blocks[b];
+                                ws.InsertRow(insertAt, subDt.Rows.Count + 2);
+                                ws.Cells[insertAt, colstart + 1].Value = (linkCol.fieldLabel ?? linkCol.fieldName) + ": " + filterValue;
+                                ws.Cells[insertAt, colstart + 1].Style.Font.Bold = true;
+                                ws.Cells[insertAt, colstart + 1].Style.Font.Italic = true;
+                                FormatExcelSheet(subDt, ws, insertAt + 1, colstart + 1, columns, false, true, null, false, true, isFilterDetail);
+                            }
+                        }
+                    }
+                }
+                // "As Total Table" mode: write a separate 2-column summary table below the main data
+                if (isTableMode && !pivot)
+                {
+                    var allDataRows = dt.Rows.Cast<DataRow>().ToList();
+                    int tblRow = (ws.Dimension?.End.Row ?? (rowstart + dt.Rows.Count + 1)) + 2;
+                    int tblCol = colstart;
+
+                    ws.Cells[tblRow, tblCol].Value = "Field";
+                    ws.Cells[tblRow, tblCol].Style.Font.Bold = true;
+                    ws.Cells[tblRow, tblCol + 1].Value = "Total";
+                    ws.Cells[tblRow, tblCol + 1].Style.Font.Bold = true;
+                    ws.Cells[tblRow, tblCol + 1].Style.HorizontalAlignment = OfficeOpenXml.Style.ExcelHorizontalAlignment.Right;
+                    tblRow++;
+
+                    for (int j = 0; j < dt.Columns.Count; j++)
+                    {
+                        var dc = dt.Columns[j];
+                        var fc = columns?.FirstOrDefault(c => c.fieldName == dc.ColumnName);
+                        if (fc?.dontSubTotal == true) continue;
+                        bool colIsNumeric = dc.DataType.Name.StartsWith("Int") || dc.DataType.Name == "Double" ||
+                                           dc.DataType.Name == "Decimal" || fc?.isNumeric == true ||
+                                           fc?.fieldFormating == "Currency" || fc?.fieldFormating == "Decimal";
+                        var agg = fc?.totalRowAggregate ?? "Sum";
+                        bool isCountAgg = agg == "Count" || agg == "Count Distinct";
+                        if (!colIsNumeric && !isCountAgg) continue;
+
+                        string label = fc?.fieldLabel ?? fc?.fieldName ?? dc.ColumnName;
+                        ws.Cells[tblRow, tblCol].Value = label;
+
+                        decimal total = ComputeAggregateValue(agg, allDataRows, dc.ColumnName);
+                        ws.Cells[tblRow, tblCol + 1].Value = total;
+                        ws.Cells[tblRow, tblCol + 1].Style.HorizontalAlignment = OfficeOpenXml.Style.ExcelHorizontalAlignment.Right;
+                        ws.Cells[tblRow, tblCol + 1].Style.Font.Bold = true;
+
+                        string decFmt = new string('0', fc?.decimalPlacesDigit ?? 2);
+                        if (fc?.fieldFormating == "Currency")
+                            ws.Cells[tblRow, tblCol + 1].Style.Numberformat.Format = (fc.currencySymbol ?? "$") + "###,###,##0." + decFmt;
+                        else if (fc?.fieldFormating == "Decimal")
+                            ws.Cells[tblRow, tblCol + 1].Style.Numberformat.Format = "###,###,##0." + decFmt;
+
+                        tblRow++;
+                    }
+                    ws.Column(tblCol).AutoFit();
+                    ws.Column(tblCol + 1).AutoFit();
+                }
+
+                if (allExpanded && dt.Rows.Count > 0)
+                {
+                    if (onlyAndGroupInDetailColumns.Any())
+                    {
+                        columns.AddRange(onlyAndGroupInDetailColumns);
+                        var columnOrderList = GetGroupFunctionList(expandSqls);
+                        columns = columns.OrderBy(c => columnOrderList.FindIndex(g => g.CustomLabel == c.fieldName)).ToList();
+                    }
+                    int headerRow = isFilterDetail ? 4 : 3;
+                    var insertRowIndex = headerRow;
+
+                    var drilldownRow = new List<string>();
+                    var dr = dt.Rows[0];
+
+                    // Batch size - adjust as needed for performance
+                    int batchSize = 100;
+
+                    int i = 0;
+                    foreach (DataColumn dc in dt.Columns)
+                    {
+                        if (i >= sqlFields.Count) break;
+                        var col = sqlFields[i++];
+                        drilldownRow.Add($@"
+                                    {{
+                                        ""Value"":""{dr[dc]}"",
+                                        ""FormattedValue"":""{dr[dc]}"",
+                                        ""LabelValue"":""'{dr[dc]}'"",
+                                        ""NumericValue"":null,
+                                        ""Column"":{{
+                                            ""SqlField"":""{col.Substring(0, col.LastIndexOf(" AS "))}"",
+                                            ""ColumnName"":""{dc.ColumnName}"",
+                                            ""DataType"":""{dc.DataType.ToString()}"",
+                                            ""IsNumeric"":{(dc.DataType.Name.StartsWith("Int") || dc.DataType.Name == "Double" || dc.DataType.Name == "Decimal" ? "true" : "false")},
+                                            ""FormatType"":""""
+                                        }}
+                                    }}
+                                ");
+                    }
+                    bool isGroupInDetailExist = ContainsGroupInDetail(expandSqls);
+                    var drillDownRowValue = $"\"DrillDownRow\": [{string.Join(',', drilldownRow)}]";
+                    var reportData = expandSqls.Replace("\"DrillDownRow\":[]", drillDownRowValue);
+                    // If Group in Detail does not exist, set IsAggregateReport to false
+                    if (!isGroupInDetailExist)
+                    {
+                        reportData = reportData.Replace("\"IsAggregateReport\":true", "\"IsAggregateReport\":false");
+                    }
+                    reportData = UpdateOnlyTop(reportData);
+
+                    var drilldownSqlStr = await RunReportApiCall(reportData);
+                    SqlQuery query = null;
+                    if (drilldownSqlStr.StartsWith("{\"sql\""))
+                    {
+                        query = JsonConvert.DeserializeObject<SqlQuery>(drilldownSqlStr);
+                    }
+                    string drilldownSql = query?.sql ?? drilldownSqlStr;
+
+                    if (!string.IsNullOrEmpty(drilldownSql))
+                    {
+                        // Process in batches (synchronous)
+                        for (int startIndex = 0; startIndex < dt.Rows.Count; startIndex += batchSize)
+                        {
+                            var combinedSqls = new StringBuilder();
+
+                            int endIndex = Math.Min(startIndex + batchSize, dt.Rows.Count);
+                            for (int rowIndex = startIndex; rowIndex < endIndex; rowIndex++)
+                            {
+                                var ddr = dt.Rows[rowIndex];
+                                string filteredSql = drilldownSql;
+
+                                foreach (DataColumn dc in dt.Columns)
+                                {
+                                    var value = ddr[dc].ToString().Replace("'", "''");
+                                    filteredSql = filteredSql.Replace($"<{dc.ColumnName}>", value);
+                                }
+
+                                combinedSqls.AppendLine(filteredSql + ";");
+                            }
+
+                            // Execute one batch at a time
+                            var dts = databaseConnection.ExecuteDataSetQuery(connectionString, combinedSqls.ToString(), qry?.parameters);
+                            foreach (DataTable ddt in dts.Tables)
+                            {
+                                ws.InsertRow(insertRowIndex + 2, ddt.Rows.Count);
+
+                                FormatExcelSheet(ddt, ws, insertRowIndex == headerRow ? headerRow : (insertRowIndex + 1), dt.Columns.Count + 2, columns, false, insertRowIndex == headerRow, isexpanded: true,isFilterDetail: isFilterDetail);
+
+                                insertRowIndex += ddt.Rows.Count + 1;
+                            }
+                        }
+                    }
+                }
+
+                ws.View.FreezePanes(4, 1);
+                return xp.GetAsByteArray();
+            }
+        }
+        
+        public static ReportHeaderColumn GetColumnFormatting(DataColumn dc, List<ReportHeaderColumn> columns, ref string value)
+        {
+            var isCurrency = false;
+            var isNumeric = dc.DataType.Name.StartsWith("Int") || dc.DataType.Name == "Double" || dc.DataType.Name == "Decimal";
+            var formatColumn = columns?.FirstOrDefault(x => dc.ColumnName.StartsWith(x.fieldName)) ?? new ReportHeaderColumn();
+            string decimalFormat = new string('0', formatColumn.decimalPlacesDigit.GetValueOrDefault());
+            try
+            {
+                if (dc.DataType == typeof(decimal) || (formatColumn != null && (formatColumn.fieldFormating == "Decimal" || formatColumn.fieldFormating == "Double")))
+                {
+                    if (formatColumn.decimalPlacesDigit != null)
+                    {
+                        value = Convert.ToDecimal(value).ToString("###,###,##0." + decimalFormat);
+                    }
+                    else
+                    {
+                        value = Convert.ToDecimal(value).ToString("###,###,##0.00");
+                    }
+                    isNumeric = true;
+                }
+                if (formatColumn != null && formatColumn.fieldFormating == "Currency")
+                {
+                    if (formatColumn.currencySymbol != null && formatColumn.decimalPlacesDigit != null)
+                    {
+                        value = Convert.ToDecimal(value).ToString(formatColumn.currencySymbol + "###,###,##0." + decimalFormat);
+                    }
+                    else if (formatColumn.currencySymbol != null)
+                    {
+                        value = Convert.ToDecimal(value).ToString(formatColumn.currencySymbol + "###,###,##0.00");
+                    }
+                    isCurrency = true;
+                }
+                {
+                    var ff = formatColumn?.fieldFormating;
+                    var ft = formatColumn?.fieldType;
+                    var explicitDateFormat = ff == "Date" || ff == "Date and Time" || ff == "Time";
+                    var autoDateField = string.IsNullOrEmpty(ff) || ff == "Auto";
+                    var isDateColumn = dc.DataType.Name == "DateTime" || ft == "Date" || ft == "DateTime" || ft == "Time";
+
+                    if ((explicitDateFormat || (autoDateField && isDateColumn)) && !string.IsNullOrEmpty(value))
+                    {
+                        var date = Convert.ToDateTime(value);
+                        string effectiveFormat = explicitDateFormat ? ff : (ft == "Time" ? "Time" : "Date");
+
+                        if (explicitDateFormat && formatColumn.dateFormat == "Custom" && !string.IsNullOrEmpty(formatColumn.customDateFormat))
+                        {
+                            value = date.ToString(formatColumn.customDateFormat);
+                        }
+                        else
+                        {
+                            var resolvedName = explicitDateFormat
+                                ? (!string.IsNullOrEmpty(formatColumn.dateFormat) ? formatColumn.dateFormat : defaultDateFormat)
+                                : defaultDateFormat;
+                            var culture = GetDateCulture(resolvedName);
+
+                            switch (effectiveFormat)
+                            {
+                                case "Date": value = date.ToString("d", culture); break;
+                                case "Date and Time": value = date.ToString("g", culture); break;
+                                case "Time": value = date.ToString("t", culture); break;
+                            }
+                        }
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                // ignore formatting exceptions
+            }
+
+            if (formatColumn != null)
+            {
+                formatColumn.isNumeric = isNumeric;
+                formatColumn.isCurrency = isCurrency;
+            }
+
+            return formatColumn ?? new ReportHeaderColumn
+            {
+                isNumeric = isNumeric,
+                isCurrency = isCurrency
+            };
+        }
+
+
+        private static XSolidBrush GetBrushWithColor(string htmlColor = "")
+        {
+            var color = ColorTranslator.FromHtml(!string.IsNullOrEmpty(htmlColor) ? htmlColor : "#007bff");
+            var xColor = XColor.FromArgb(color.R, color.G, color.B);
+            return new XSolidBrush(xColor);
+        }
+
+       
+        private static List<string> WrapText(XGraphics gfx, string text, XRect rect, XFont font, XStringFormat format)
+        {
+            List<string> lines = new List<string>();
+            if (string.IsNullOrWhiteSpace(text))
+            {
+                lines.Add("");
+                return lines;
+            }
+
+            string[] words = text.Split(new[] { ' ' }, StringSplitOptions.None);
+            string line = "";
+
+            foreach (var word in words)
+            {
+                string testLine = string.IsNullOrEmpty(line) ? word : line + " " + word;
+                var size = gfx.MeasureString(testLine, font);
+
+                if (size.Width > rect.Width)
+                {
+                    if (!string.IsNullOrEmpty(line))
+                    {
+                        lines.Add(line);
+                        line = "";
+                    }
+
+                    if (gfx.MeasureString(word, font).Width > rect.Width)
+                    {
+                        string current = "";
+                        foreach (var ch in word)
+                        {
+                            string test = current + ch;
+                            if (gfx.MeasureString(test, font).Width > rect.Width)
+                            {
+                                if (!string.IsNullOrEmpty(current))
+                                    lines.Add(current);
+                                current = ch.ToString();
+                            }
+                            else
+                            {
+                                current = test;
+                            }
+                        }
+                        line = current;
+                    }
+                    else
+                    {
+                        line = word;
+                    }
+                }
+                else
+                {
+                    line = testLine;
+                }
+            }
+
+            if (!string.IsNullOrEmpty(line))
+                lines.Add(line);
+
+            return lines;
+        }
+
+        private static string GetUniqueColumnName(DataTable dt, string desired)
+        {
+            if (!dt.Columns.Contains(desired)) return desired;
+            int i = 2;
+            string candidate;
+            do { candidate = desired + " (" + i++ + ")"; } while (dt.Columns.Contains(candidate));
+            return candidate;
+        }
+
+        private async static Task<DataTable> BuildExportData(string reportSql, string connectKey, string expandSqls = null, List<ReportHeaderColumn> columns = null, bool pivot = false, string pivotColumn = null, string pivotFunction = null)
+        {
+
+            var connectionString = DotNetReportHelper.GetConnectionString(connectKey);
+            IDatabaseConnection databaseConnection = DatabaseConnectionFactory.GetConnection(dbtype);
+            var data = await GetDataTable(reportSql, connectKey);
+
+            var qry = data.qry;
+            var sqlFields = data.sqlFields;
+            var dt = data.dt;
+            RemoveColumnsBySubstring(dt, "__prm__");
+
+
+            if (pivot) dt = Transpose(dt);
+
+            if (columns?.Count > 0)
+            {
+                foreach (var col in columns)
+                {
+                    if (string.IsNullOrEmpty(col.fieldName)) continue;
+
+                    DataColumn target = dt.Columns.Contains(col.fieldName)
+                        ? dt.Columns[col.fieldName]
+                        : dt.Columns.Cast<DataColumn>().FirstOrDefault(x => x.ColumnName.StartsWith(col.fieldName));
+                    if (target == null) continue;
+
+                    if (col.hideStoredProcColumn)
+                    {
+                        dt.Columns.Remove(target);
+                    }
+                    else if (!string.IsNullOrWhiteSpace(col.fieldLabel) && target.ColumnName != col.fieldLabel)
+                    {
+                        target.ColumnName = GetUniqueColumnName(dt, col.fieldLabel);
+                    }
+                }
+            }
+
+            if (!string.IsNullOrEmpty(pivotColumn))
+            {
+                if (!useAltPivot)
+                {
+                    var pd = await GetPivotTable(databaseConnection, connectionString, dt, qry.sql, sqlFields, expandSqls, pivotColumn, pivotFunction, 1, int.MaxValue, null, false, parameters: qry.parameters);
+                    dt = pd.dt;
+                    if (!string.IsNullOrEmpty(pd.sql)) qry.sql = pd.sql;
+                }
+                else
+                {
+                    var ds = await GetDrillDownData(databaseConnection, connectionString, dt, sqlFields, expandSqls, qry.parameters);
+                    dt = PushDatasetIntoDataTable(dt, ds, pivotColumn, pivotFunction, expandSqls);
+                }
+            }
+
+            return dt;
+        }
+
+        private static string StripHtmlTags(string html)
+        {
+            if (string.IsNullOrEmpty(html)) return "";
+            var noTags = System.Text.RegularExpressions.Regex.Replace(html, "<[^>]+>", " ");
+            noTags = System.Net.WebUtility.HtmlDecode(noTags);
+            noTags = System.Text.RegularExpressions.Regex.Replace(noTags, "\\s+", " ").Trim();
+            return noTags;
+        }
+
+        private static string SubstituteExportPlaceholders(string text, string userName, string userRoles, int pageNumber, int totalPages, string reportName = null)
+        {
+            if (string.IsNullOrEmpty(text)) return "";
+            DateTime now = DateTime.Now;
+            var culture = DotNetReportHelper.GetDateCulture(DotNetReportHelper.defaultDateFormat);
+            text = text.Replace("{current.user}", userName ?? "")
+                       .Replace("{CURRENTUSER}", userName ?? "")
+                       .Replace("{current.user.roles}", userRoles ?? "")
+                       .Replace("{CURRENTUSERROLES}", userRoles ?? "")
+                       .Replace("{current.datetime}", now.ToString("g", culture))
+                       .Replace("{CURRENTDATETIME}", now.ToString("g", culture))
+                       .Replace("{current.date}", now.ToString("d", culture))
+                       .Replace("{current.time}", now.ToString("t", culture))
+                       .Replace("{page.number}", pageNumber > 0 ? pageNumber.ToString() : "")
+                       .Replace("{page.total}", totalPages > 0 ? totalPages.ToString() : "")
+                       .Replace("{report.name}", reportName ?? "");
+            return text;
+        }
+        private static byte[] BuildKpiPdfAlt(DataTable dt, List<ReportHeaderColumn> columns, string reportName, string pageSize, string pageOrientation, string reportDescription)
+        {
+            using (var ms = new MemoryStream())
+            {
+                var document = new PdfDocument();
+                var page = document.AddPage();
+                if (!string.IsNullOrEmpty(pageSize))
+                {
+                    switch (pageSize.ToUpper())
+                    {
+                        case "A4": page.Size = PdfSharp.PageSize.A4; break;
+                        case "LEGAL": page.Size = PdfSharp.PageSize.Legal; break;
+                        case "A1": page.Size = PdfSharp.PageSize.A1; break;
+                        case "A2": page.Size = PdfSharp.PageSize.A2; break;
+                        case "A3": page.Size = PdfSharp.PageSize.A3; break;
+                        case "TABLOID": page.Size = PdfSharp.PageSize.Tabloid; break;
+                        case "LETTER": default: page.Size = PdfSharp.PageSize.Letter; break;
+                    }
+                }
+                if (!string.IsNullOrEmpty(pageOrientation) && pageOrientation.ToUpper() == "LANDSCAPE")
+                    page.Orientation = PdfSharp.PageOrientation.Landscape;
+
+                var gfx = XGraphics.FromPdfPage(page);
+                double y = 40;
+
+                gfx.DrawString(reportName ?? "", new XFont("Arial", 16, XFontStyleEx.Bold), XBrushes.Black,
+                    new XRect(0, y, page.Width, 30), XStringFormats.Center);
+                y += 40;
+
+                if (!string.IsNullOrEmpty(reportDescription))
+                {
+                    gfx.DrawString(reportDescription, new XFont("Arial", 10, XFontStyleEx.Italic),
+                        new XSolidBrush(XColor.FromArgb(102, 112, 133)),
+                        new XRect(40, y, page.Width - 80, 30), XStringFormats.Center);
+                    y += 30;
+                }
+
+                y += 20;
+
+                if (dt == null || dt.Rows.Count == 0)
+                {
+                    gfx.DrawString("No data found", new XFont("Arial", 14, XFontStyleEx.Regular),
+                        new XSolidBrush(XColor.FromArgb(102, 112, 133)),
+                        new XRect(0, y, page.Width, 30), XStringFormats.Center);
+                    gfx.Dispose();
+                    document.Save(ms);
+                    return ms.ToArray();
+                }
+
+                var row = dt.Rows[0];
+                double cardWidth = Math.Min(320, page.Width.Point - 80);
+                double cardHeight = 120;
+                double cardX = (page.Width - cardWidth) / 2;
+                var borderPen = new XPen(XColor.FromArgb(222, 226, 230), 1);
+                var labelBrush = new XSolidBrush(XColor.FromArgb(71, 84, 103));
+
+                for (int c = 0; c < dt.Columns.Count; c++)
+                {
+                    var col = columns != null && columns.Count > c ? columns[c] : null;
+                    string label = col != null && !string.IsNullOrEmpty(col.fieldLabel)
+                        ? col.fieldLabel
+                        : (col != null && !string.IsNullOrEmpty(col.fieldName) ? col.fieldName : dt.Columns[c].ColumnName);
+
+                    string value = row[c]?.ToString() ?? "";
+                    try { GetColumnFormatting(dt.Columns[c], columns, ref value); } catch { }
+
+                    var cardRect = new XRect(cardX, y, cardWidth, cardHeight);
+                    gfx.DrawRectangle(borderPen, new XSolidBrush(XColor.FromArgb(249, 250, 251)), cardRect);
+
+                    gfx.DrawString(label, new XFont("Arial", 11, XFontStyleEx.Bold), labelBrush,
+                        new XRect(cardX, y + 14, cardWidth, 20), XStringFormats.TopCenter);
+                    gfx.DrawString(value, new XFont("Arial", 34, XFontStyleEx.Bold), XBrushes.Black,
+                        new XRect(cardX, y + 44, cardWidth, 60), XStringFormats.TopCenter);
+
+                    y += cardHeight + 20;
+                }
+
+                gfx.Dispose();
+                document.Save(ms);
+                return ms.ToArray();
+            }
+        }
+
+        public async static Task<byte[]> GetPdfFileAlt(string reportSql, string connectKey, string reportName, string chartData = null, bool allExpanded = false,
+    string expandSqls = null, List<ReportHeaderColumn> columns = null, bool includeSubtotal = false, bool pivot = false, string pivotColumn = null, string pivotFunction = null,
+    string pageSize = "", string pageOrientation = "", bool subTotalPerGroup = false, string filterDetailsText = null, string reportDescription = null,
+    List<ReportHeaderColumn> onlyAndGroupInDetailColumns = null, string reportType = null)
+        {
+            var dt = await BuildExportData(reportSql, connectKey, expandSqls, columns, pivot, pivotColumn, pivotFunction);
+
+            if (reportType == "Single")
+                return BuildKpiPdfAlt(dt, columns, reportName, pageSize, pageOrientation, reportDescription);
+
+            var allRowsList = new List<DataRow>();
+            var currentGroupRowsList = new List<DataRow>();
+
+            var drilldownData = new Dictionary<int, DataTable>();
+            if (allExpanded && dt.Rows.Count > 0)
+            {
+                var connectionString = DotNetReportHelper.GetConnectionString(connectKey);
+                IDatabaseConnection databaseConnection = DatabaseConnectionFactory.GetConnection(dbtype);
+                var data = await GetDataTable(reportSql, connectKey);
+                var qry = data.qry;
+                var sqlFields = data.sqlFields;
+                if (onlyAndGroupInDetailColumns != null && onlyAndGroupInDetailColumns.Any())
+                {
+                    columns.AddRange(onlyAndGroupInDetailColumns);
+                    var columnOrderList = GetGroupFunctionList(expandSqls);
+                    columns = columns.OrderBy(c => columnOrderList.FindIndex(g => g.CustomLabel == c.fieldName)).ToList();
+                }
+                var drilldownRow = new List<string>();
+                var dr = dt.Rows[0];
+                int fi = 0;
+                foreach (DataColumn dc in dt.Columns)
+                {
+                    if (fi >= sqlFields.Count) break;
+                    var col = sqlFields[fi++];
+                    var asIdx = col.LastIndexOf(" AS ");
+                    var sqlFieldName = asIdx >= 0 ? col.Substring(0, asIdx) : col;
+                    drilldownRow.Add($@"
+                {{
+                    ""Value"":""{dr[dc]}"",
+                    ""FormattedValue"":""{dr[dc]}"",
+                    ""LabelValue"":""'{dr[dc]}'"",
+                    ""NumericValue"":null,
+                    ""Column"":{{
+                        ""SqlField"":""{sqlFieldName}"",
+                        ""ColumnName"":""{dc.ColumnName}"",
+                        ""DataType"":""{dc.DataType}"",
+                        ""IsNumeric"":{(dc.DataType.Name.StartsWith("Int") || dc.DataType.Name == "Double" || dc.DataType.Name == "Decimal" ? "true" : "false")},
+                        ""FormatType"":""""
+                    }}
+                }}");
+                }
+
+                bool isGroupInDetailExist = ContainsGroupInDetail(expandSqls);
+                var drillDownRowValue = $"\"DrillDownRow\": [{string.Join(',', drilldownRow)}]";
+                var reportData = expandSqls.Replace("\"DrillDownRow\":[]", drillDownRowValue);
+                if (!isGroupInDetailExist)
+                {
+                    reportData = reportData.Replace("\"IsAggregateReport\":true", "\"IsAggregateReport\":false");
+                }
+                reportData = UpdateOnlyTop(reportData);
+
+                var drilldownSqlStr = await RunReportApiCall(reportData);
+                SqlQuery ddQuery = null;
+                if (drilldownSqlStr.StartsWith("{\"sql\""))
+                {
+                    ddQuery = JsonConvert.DeserializeObject<SqlQuery>(drilldownSqlStr);
+                }
+                string drilldownSql = ddQuery?.sql ?? drilldownSqlStr;
+
+                if (!string.IsNullOrEmpty(drilldownSql))
+                {
+                    int batchSize = 100;
+                    for (int startIndex = 0; startIndex < dt.Rows.Count; startIndex += batchSize)
+                    {
+                        int endIndex = Math.Min(startIndex + batchSize, dt.Rows.Count);
+                        var combinedSqls = new StringBuilder();
+
+                        for (int rowIndex = startIndex; rowIndex < endIndex; rowIndex++)
+                        {
+                            var ddr = dt.Rows[rowIndex];
+                            string filteredSql = drilldownSql;
+                            foreach (DataColumn dc in dt.Columns)
+                            {
+                                var value = ddr[dc]?.ToString().Replace("'", "''") ?? "";
+                                filteredSql = filteredSql.Replace($"<{dc.ColumnName}>", value);
+                            }
+                            combinedSqls.AppendLine(filteredSql + ";");
+                        }
+                        var dts = databaseConnection.ExecuteDataSetQuery(connectionString, combinedSqls.ToString(), qry?.parameters);
+
+                        int t = 0;
+                        for (int rowIndex = startIndex; rowIndex < endIndex && t < dts.Tables.Count; rowIndex++, t++)
+                        {
+                            drilldownData[rowIndex] = dts.Tables[t];
+                        }
+                    }
+                }
+            }
+            // ---------- END DRILLDOWN PRE-FETCH ----------
+
+            var document = new PdfDocument();
+            int leftMargin = 40;
+            int rightMargin = 40;
+            double minColumnWidth = 100; // minimum column width
+            double maxColumnWidth = 300; // optional max width limit
+            double detailIndent = 20;    // ADDED: indent for drilldown detail rows
+
+            var tempPage = document.AddPage();
+            if (!String.IsNullOrEmpty(pageSize))
+            {
+                switch (pageSize.ToUpper())
+                {
+                    case "A4": tempPage.Size = PdfSharp.PageSize.A4; break;
+                    case "LEGAL": tempPage.Size = PdfSharp.PageSize.Legal; break;
+                    case "A1": tempPage.Size = PdfSharp.PageSize.A1; break;
+                    case "A2": tempPage.Size = PdfSharp.PageSize.A2; break;
+                    case "A3": tempPage.Size = PdfSharp.PageSize.A3; break;
+                    case "TABLOID": tempPage.Size = PdfSharp.PageSize.Tabloid; break;
+                    case "LETTER": default: tempPage.Size = PdfSharp.PageSize.Letter; break;
+                }
+            }
+            if (!String.IsNullOrEmpty(pageOrientation))
+            {
+                switch (pageOrientation.ToUpper())
+                {
+                    case "LANDSCAPE": tempPage.Orientation = PdfSharp.PageOrientation.Landscape; break;
+                    case "PORTRIAT": default: tempPage.Orientation = PdfSharp.PageOrientation.Portrait; break;
+                }
+            }
+            double availableContentWidth = tempPage.Width.Point - leftMargin - rightMargin;
+            var gfxMeasure = XGraphics.FromPdfPage(tempPage);
+            var fontMeasure = new XFont("Arial", 11, XFontStyleEx.Bold);
+            List<double> columnWidths = new List<double>();
+            foreach (DataColumn col in dt.Columns)
+            {
+                string headerText = col.ColumnName;
+                double width = gfxMeasure.MeasureString(headerText, fontMeasure).Width + 10;
+                foreach (DataRow row in dt.Rows.Cast<DataRow>().Take(20)) // sample first 20 rows for width
+                {
+                    var cellText = row[col]?.ToString() ?? "";
+                    double w = gfxMeasure.MeasureString(cellText, fontMeasure).Width + 10;
+                    if (w > width)
+                        width = w;
+                }
+                width = Math.Max(minColumnWidth, Math.Min(width, maxColumnWidth));
+                columnWidths.Add(width);
+            }
+            gfxMeasure.Dispose();
+            gfxMeasure = null;
+            document.Pages.Remove(tempPage); // remove temp measuring page
+
+            if (!String.IsNullOrEmpty(pageSize) && availableContentWidth > 0 && columnWidths.Count > 0)
+            {
+                double sumWidths = columnWidths.Sum();
+                if (sumWidths > availableContentWidth)
+                {
+                    double minAllowed = minColumnWidth * 0.5;
+                    if (availableContentWidth >= columnWidths.Count * minAllowed)
+                    {
+                        double scale = availableContentWidth / sumWidths;
+                        for (int idx = 0; idx < columnWidths.Count; idx++)
+                            columnWidths[idx] = Math.Max(minAllowed, columnWidths[idx] * scale);
+                    }
+                    else
+                    {
+                        double equalWidth = availableContentWidth / columnWidths.Count;
+                        for (int idx = 0; idx < columnWidths.Count; idx++)
+                            columnWidths[idx] = equalWidth;
+                    }
+                }
+            }
+            double totalWidth = columnWidths.Sum() + leftMargin + rightMargin;
+            PdfPage page = null;
+            XGraphics gfx = null;
+            XTextFormatter tfx = null;
+
+            double pageHeight = 0;
+
+            using (var ms = new MemoryStream())
+            {
+                Encoding.RegisterProvider(System.Text.CodePagesEncodingProvider.Instance);
+                var fontNormal = new XFont("Arial", 11, XFontStyleEx.Regular);
+                var fontBold = new XFont("Arial", 11, XFontStyleEx.Bold);
+                var currentYPosition = 30;
+                var currentXPosition = leftMargin;
+                double cellPadding = 3;
+                XRect rect = new XRect();
+
+                void AddNewPageWithHeaders(bool firstPage = false)
+                {
+                    page = document.AddPage();
+                    if (!String.IsNullOrEmpty(pageSize))
+                    {
+                        switch (pageSize.ToUpper())
+                        {
+                            case "A4":
+                                page.Size = PdfSharp.PageSize.A4;
+                                break;
+                            case "LEGAL":
+                                page.Size = PdfSharp.PageSize.Legal;
+                                break;
+                            case "A1":
+                                page.Size = PdfSharp.PageSize.A1;
+                                break;
+                            case "A2":
+                                page.Size = PdfSharp.PageSize.A2;
+                                break;
+                            case "A3":
+                                page.Size = PdfSharp.PageSize.A3;
+                                break;
+                            case "TABLOID":
+                                page.Size = PdfSharp.PageSize.Tabloid;
+                                break;
+                            case "LETTER":
+                            default:
+                                page.Size = PdfSharp.PageSize.Letter;
+                                break;
+                        }
+                    }
+                    if (!String.IsNullOrEmpty(pageOrientation))
+                    {
+                        switch (pageOrientation.ToUpper())
+                        {
+                            case "LANDSCAPE":
+                                page.Orientation = PdfSharp.PageOrientation.Landscape;
+                                break;
+                            case "PORTRIAT":
+                            default:
+                                page.Orientation = PdfSharp.PageOrientation.Portrait;
+                                break;
+                        }
+                    }
+                    if (string.IsNullOrEmpty(pageSize) && totalWidth > page.Width) page.Width = totalWidth;
+                    pageHeight = page.Height.Point - 50;
+                    gfx = XGraphics.FromPdfPage(page);
+                    tfx = new XTextFormatter(gfx);
+                    currentYPosition = 20;
+
+                    if (firstPage)
+                    {
+                        gfx.DrawString(reportName,
+                            new XFont("Arial", 14, XFontStyleEx.Bold), XBrushes.Black,
+                            new XRect(0, currentYPosition, page.Width, 30),
+                            XStringFormats.Center);
+
+                        currentYPosition += 30;
+
+                        if (!string.IsNullOrEmpty(reportDescription))
+                        {
+                            var descFont = new XFont("Arial", 10, XFontStyleEx.Italic);
+                            var descBrush = new XSolidBrush(XColor.FromArgb(102, 112, 133));
+                            var descRect = new XRect(leftMargin, currentYPosition, page.Width - leftMargin - rightMargin, 40);
+                            tfx.Alignment = XParagraphAlignment.Center;
+                            tfx.DrawString(reportDescription, descFont, descBrush, descRect, XStringFormats.TopLeft);
+                            tfx.Alignment = XParagraphAlignment.Left;
+                            // Estimate height: ~13px per line
+                            var descWidth = page.Width - leftMargin - rightMargin;
+                            var approxLines = Math.Max(1, (int)Math.Ceiling(gfx.MeasureString(reportDescription, descFont).Width / descWidth));
+                            currentYPosition += 13 * approxLines + 5;
+                        }
+
+                        if (!string.IsNullOrEmpty(filterDetailsText))
+                        {
+                            var filterFont = new XFont("Arial", 9, XFontStyleEx.Italic);
+                            var filterBrush = new XSolidBrush(XColor.FromArgb(71, 84, 103));
+                            gfx.DrawString("Filters: " + filterDetailsText, filterFont, filterBrush,
+                                new XRect(leftMargin, currentYPosition, page.Width - leftMargin - rightMargin, 20),
+                                XStringFormats.TopLeft);
+                            currentYPosition += 20;
+                        }
+
+                        currentYPosition += 10;
+
+                        if (!string.IsNullOrEmpty(chartData) && chartData != "undefined")
+                        {
+                            try
+                            {
+                                byte[] sPDFDecoded = Convert.FromBase64String(chartData.Substring(chartData.LastIndexOf(',') + 1));
+                                var imageStream = new MemoryStream(sPDFDecoded, 0, sPDFDecoded.Length, false, true);
+                                var image = XImage.FromStream(imageStream);
+                                var maxWidth = page.Width - 100;
+                                var maxHeight = page.Height - currentYPosition - 20;
+
+                                if (image.PixelWidth > maxWidth || image.PixelHeight > maxHeight)
+                                {
+                                    var aspectRatio = (double)image.PixelWidth / image.PixelHeight;
+                                    var width = maxWidth;
+                                    var height = maxWidth / aspectRatio;
+
+                                    if (height > maxHeight)
+                                    {
+                                        height = maxHeight;
+                                        width = maxHeight * aspectRatio;
+                                    }
+
+                                    rect = new XRect(50, currentYPosition, width, height);
+                                    gfx.DrawImage(image, rect);
+                                }
+                                else
+                                {
+                                    rect = new XRect(50, currentYPosition, image.PixelWidth, image.PixelHeight);
+                                    gfx.DrawImage(image, rect);
+                                }
+
+                                currentYPosition += (int)rect.Height + 20;
+                            }
+                            catch
+                            {
+                                // Malformed/unsupported chart image: skip it rather than failing the whole PDF.
+                            }
+                        }
+                    }
+
+                    currentXPosition = leftMargin;
+
+                    var headerLines = new List<List<string>>();
+                    var headerNames = new List<string>();
+                    int headerMaxLines = 1;
+                    for (int k = 0; k < dt.Columns.Count; k++)
+                    {
+                        var columnFormatting = columns != null && columns.Count > k ? columns[k] : new ReportHeaderColumn();
+                        var columnName = !string.IsNullOrEmpty(columnFormatting.fieldLabel)
+                            ? columnFormatting.fieldLabel
+                            : (!string.IsNullOrEmpty(columnFormatting.fieldName)
+                                ? columnFormatting.fieldName
+                                : dt.Columns[k].ColumnName);
+                        headerNames.Add(columnName ?? "");
+                        var lines = WrapText(gfx, columnName ?? "",
+                            new XRect(0, 0, columnWidths[k] - cellPadding * 2, 9999),
+                            fontBold,
+                            XStringFormats.TopLeft);
+                        headerLines.Add(lines);
+                        if (lines.Count > headerMaxLines) headerMaxLines = lines.Count;
+                    }
+
+                    int headerHeight = (int)((fontBold.Height + cellPadding * 2) * headerMaxLines);
+                    for (int k = 0; k < dt.Columns.Count; k++)
+                    {
+                        rect = new XRect(currentXPosition, currentYPosition, columnWidths[k], headerHeight);
+                        gfx.DrawRectangle(XPens.LightGray, rect);
+
+                        var cellLines = headerLines[k];
+                        double textBlockHeight = cellLines.Count * fontBold.Height;
+                        double yPos = currentYPosition + (headerHeight - textBlockHeight) / 2;
+                        foreach (var l in cellLines)
+                        {
+                            XRect lineRect = new XRect(rect.Left, yPos, rect.Width, fontBold.Height);
+                            lineRect.Inflate(-cellPadding, 0);
+                            gfx.DrawString(l, fontBold, GetBrushWithColor(), lineRect, XStringFormats.TopLeft);
+                            yPos += fontBold.Height;
+                        }
+                        currentXPosition += (int)columnWidths[k];
+                    }
+
+                    currentYPosition += headerHeight + 1;
+                }
+
+                void DrawDrilldownTable(DataTable ddt)
+                {
+                    if (ddt == null || ddt.Rows.Count == 0) return;
+                    var detailFontHeader = new XFont("Arial", 9, XFontStyleEx.Bold);
+                    var detailFontNormal = new XFont("Arial", 9, XFontStyleEx.Regular);
+                    var detailBg = new XSolidBrush(XColor.FromArgb(245, 245, 245));
+                    double availableWidth = columnWidths.Sum() - detailIndent;
+                    double colWidth = Math.Max(60, availableWidth / ddt.Columns.Count);
+
+                    if (currentYPosition + 16 > pageHeight)
+                        AddNewPageWithHeaders();
+                    double xPos = leftMargin + detailIndent;
+                    foreach (DataColumn dc in ddt.Columns)
+                    {
+                        var r = new XRect(xPos, currentYPosition, colWidth, 16);
+                        gfx.DrawRectangle(XPens.LightGray,detailBg, r);
+                        r.Inflate(-3, -3);
+                        tfx.DrawString(dc.ColumnName, detailFontHeader, XBrushes.Black, r, XStringFormats.TopLeft);
+                        xPos += colWidth;
+                    }
+                    currentYPosition += 16;
+                    foreach (DataRow row in ddt.Rows)
+                    {
+                        if (currentYPosition + 16 > pageHeight)
+                            AddNewPageWithHeaders();
+                        xPos = leftMargin + detailIndent;
+                        foreach (DataColumn dc in ddt.Columns)
+                        {
+                            var r = new XRect(xPos, currentYPosition, colWidth, 16);
+                            gfx.DrawRectangle(XPens.WhiteSmoke, r);
+                            r.Inflate(-3, -3);
+                            tfx.DrawString(row[dc]?.ToString() ?? "", detailFontNormal, XBrushes.Black, r, XStringFormats.TopLeft);
+                            xPos += colWidth;
+                        }
+                        currentYPosition += 16;
+                    }
+                    currentYPosition += 4;
+                }
+                AddNewPageWithHeaders(true);
+                var outerGroupIndexes = new HashSet<int>();
+
+                if (columns != null)
+                {
+                    for (int i = 0; i < columns.Count; i++)
+                    {
+                        if (columns[i].aggregateFunction == "Outer Group")
+                            outerGroupIndexes.Add(i);
+                    }
+                }
+
+                bool hasOuterGroups = outerGroupIndexes.Any();
+
+                void DrawSubTotalRow(IEnumerable<DataRow> rows)
+                {
+                    if (currentYPosition + 20 > pageHeight)
+                        AddNewPageWithHeaders();
+
+                    currentXPosition = leftMargin;
+                    for (int j = 0; j < dt.Columns.Count; j++)
+                    {
+                        var dc = dt.Columns[j];
+                        var dummyVal = "";
+                        var formatColumn = GetColumnFormatting(dc, columns, ref dummyVal);
+                        bool dontSub = formatColumn.dontSubTotal;
+                        string displayValue = " ";
+
+                        if (!dontSub)
+                        {
+                            var agg = string.IsNullOrEmpty(formatColumn.totalRowAggregate) ? "Sum" : formatColumn.totalRowAggregate;
+                            bool colIsNumeric = formatColumn.isNumeric;
+                            bool isCountAgg = agg == "Count" || agg == "Count Distinct";
+                            if (colIsNumeric || isCountAgg)
+                            {
+                                decimal computed = ComputeAggregateValue(agg, rows, dc.ColumnName);
+                                var formatted = computed.ToString();
+                                GetColumnFormatting(dc, columns, ref formatted);
+                                displayValue = formatted;
+                            }
+                        }
+
+                        rect = new XRect(currentXPosition, currentYPosition, columnWidths[j], 20);
+                        gfx.DrawRectangle(XPens.LightGray, rect);
+                        if (displayValue != " ")
+                            gfx.DrawString(displayValue, fontNormal, XBrushes.Black, rect, XStringFormats.CenterRight);
+                        else
+                            gfx.DrawString(" ", fontNormal, XBrushes.Black, rect, XStringFormats.Center);
+                        currentXPosition += (int)columnWidths[j];
+                    }
+                    currentYPosition += 20;
+                }
+
+                string lastGroupKey = null;
+
+                for (int i = 0; i < dt.Rows.Count; i++)
+                {
+                    currentXPosition = leftMargin;
+
+                    // Build group key using outer group columns
+                    string groupKey = "";
+                    foreach (int idx in outerGroupIndexes)
+                    {
+                        groupKey += dt.Rows[i][idx]?.ToString() + "|";
+                    }
+
+                    bool isNewGroup = groupKey != lastGroupKey;
+
+                    // Per-group subtotal: when group changes, draw subtotal for completed group
+                    if (isNewGroup && lastGroupKey != null && hasOuterGroups)
+                    {
+                        if (subTotalPerGroup && includeSubtotal)
+                            DrawSubTotalRow(currentGroupRowsList);
+                        currentGroupRowsList = new List<DataRow>();
+                    }
+
+                    int maxLines = 1;
+
+                    // Measure row height first
+                    for (int j = 0; j < dt.Columns.Count; j++)
+                    {
+                        string value = dt.Rows[i][j]?.ToString() ?? "";
+                        if (outerGroupIndexes.Contains(j) && !isNewGroup)
+                            value = ""; // blank grouped columns for repeated rows
+
+                        var lines = WrapText(gfx, value,
+                            new XRect(0, 0, columnWidths[j], 9999),
+                            fontNormal,
+                            XStringFormats.Center);
+
+                        maxLines = Math.Max(maxLines, lines.Count);
+                    }
+
+                    int rowHeight = (int)((fontNormal.Height + cellPadding * 2) * maxLines);
+
+                    if (currentYPosition + rowHeight > pageHeight)
+                    {
+                        AddNewPageWithHeaders();
+                    }
+
+                    currentXPosition = leftMargin;
+
+                    for (int j = 0; j < dt.Columns.Count; j++)
+                    {
+                        var dc = dt.Columns[j];
+                        var rawValue = dt.Rows[i][j]?.ToString() ?? "";
+
+                        // Blank grouped columns unless first occurrence
+                        if (outerGroupIndexes.Contains(j) && !isNewGroup)
+                            rawValue = "";
+
+                        var tempVal = rawValue;
+                        var formatColumn = GetColumnFormatting(dc, columns, ref tempVal);
+
+                        var lines = WrapText(gfx, tempVal,
+                            new XRect(0, 0, columnWidths[j], 9999),
+                            fontNormal,
+                            XStringFormats.Center);
+
+                        rect = new XRect(currentXPosition, currentYPosition, columnWidths[j], rowHeight);
+                        gfx.DrawRectangle(XPens.WhiteSmoke, rect);
+
+                        var horizontalAlignment =
+                            formatColumn.fieldAlign == "Right" ||
+                            (formatColumn.isNumeric &&
+                            (formatColumn.fieldAlign == "Auto" || string.IsNullOrEmpty(formatColumn.fieldAlign)))
+                                ? XStringFormats.CenterRight
+                                : formatColumn.fieldAlign == "Center"
+                                    ? XStringFormats.Center
+                                    : XStringFormats.CenterLeft;
+
+                        var yPosition = currentYPosition + 1;
+
+                        foreach (string l in lines)
+                        {
+                            XRect lineRect = new XRect(rect.Left, yPosition, rect.Width, fontNormal.Height);
+                            lineRect.Inflate(-cellPadding, -cellPadding);
+                            gfx.DrawString(l, fontNormal, XBrushes.Black, lineRect, horizontalAlignment);
+                            yPosition += fontNormal.Height;
+                        }
+
+                        currentXPosition += (int)columnWidths[j];
+                    }
+
+                    currentYPosition += rowHeight;
+                    allRowsList.Add(dt.Rows[i]);
+                    currentGroupRowsList.Add(dt.Rows[i]);
+                    lastGroupKey = groupKey;
+
+                    // ---------- ADDED: draw drilldown detail rows right under this parent row ----------
+                    if (allExpanded && drilldownData.TryGetValue(i, out var ddtForRow))
+                    {
+                        DrawDrilldownTable(ddtForRow);
+                    }
+                    // ---------- END ADDED ----------
+                }
+
+                // Last group subtotal
+                if (subTotalPerGroup && includeSubtotal && hasOuterGroups && currentGroupRowsList.Any())
+                    DrawSubTotalRow(currentGroupRowsList);
+
+                // Grand total across all rows
+                if (includeSubtotal && allRowsList.Any())
+                    DrawSubTotalRow(allRowsList);
+
+                if (gfx != null)
+                {
+                    gfx.Dispose();
+                    gfx = null;
+                }
+
+                document.Save(ms);
+                return ms.ToArray();
+            }
+        }
+        private static string SubstituteHtmlPlaceholders(string html, string currentUserName, string currentUserRoles, int pageNumber, int totalPages, bool useWordFields = false, string reportName = null)
+        {
+            if (string.IsNullOrEmpty(html)) return "";
+            var now = DateTime.Now;
+            string pageField;
+            string totalField;
+            if (useWordFields)
+            {
+                pageField = "<!--[if supportFields]><span style='mso-element:field-begin'></span> PAGE <span style='mso-element:field-separator'></span><![endif]-->" +
+                            (pageNumber > 0 ? pageNumber.ToString() : "1") +
+                            "<!--[if supportFields]><span style='mso-element:field-end'></span><![endif]-->";
+                totalField = "<!--[if supportFields]><span style='mso-element:field-begin'></span> NUMPAGES <span style='mso-element:field-separator'></span><![endif]-->" +
+                             (totalPages > 0 ? totalPages.ToString() : "1") +
+                             "<!--[if supportFields]><span style='mso-element:field-end'></span><![endif]-->";
+            }
+            else
+            {
+                pageField = pageNumber > 0 ? pageNumber.ToString() : "";
+                totalField = totalPages > 0 ? totalPages.ToString() : "";
+            }
+            var culture = DotNetReportHelper.GetDateCulture(DotNetReportHelper.defaultDateFormat);
+            return html.Replace("{current.user}", System.Net.WebUtility.HtmlEncode(currentUserName ?? ""))
+                       .Replace("{CURRENTUSER}", System.Net.WebUtility.HtmlEncode(currentUserName ?? ""))
+                       .Replace("{current.user.roles}", System.Net.WebUtility.HtmlEncode(currentUserRoles ?? ""))
+                       .Replace("{CURRENTUSERROLES}", System.Net.WebUtility.HtmlEncode(currentUserRoles ?? ""))
+                       .Replace("{current.datetime}", now.ToString("g", culture))
+                       .Replace("{CURRENTDATETIME}", now.ToString("g", culture))
+                       .Replace("{current.date}", now.ToString("d", culture))
+                       .Replace("{current.time}", now.ToString("t", culture))
+                       .Replace("{page.number}", pageField)
+                       .Replace("{page.total}", totalField)
+                       .Replace("{report.name}", System.Net.WebUtility.HtmlEncode(reportName ?? ""));
+        }
+
+        private static string _wordReportCss;
+
+        private static string GetWordReportCss()
+        {
+            if (_wordReportCss != null) return _wordReportCss;
+            var css = new StringBuilder();
+            try
+            {
+                var searchDirs = new[]
+                {
+                    Path.Combine(AppContext.BaseDirectory, "wwwroot", "css"),
+                    Path.Combine(Directory.GetCurrentDirectory(), "wwwroot", "css")
+                };
+                var cssDir = searchDirs.FirstOrDefault(Directory.Exists);
+                if (cssDir != null)
+                {
+                    var matchingFiles = Directory.GetFiles(cssDir, "dotnetreport*.css")
+                        .OrderBy(f => f);
+                    foreach (var file in matchingFiles)
+                    {
+                        try
+                        {
+                            css.AppendLine(File.ReadAllText(file));
+                        }
+                        catch {}
+                    }
+                }
+            }
+            catch { }
+            return _wordReportCss = css.ToString();
+        }
+
+        private static string WrapHtmlForWord(string innerHtml)
+        {
+            return "<html xmlns:o=\"urn:schemas-microsoft-com:office:office\" xmlns:w=\"urn:schemas-microsoft-com:office:word\">" +
+                   "<head><meta http-equiv=\"Content-Type\" content=\"text/html; charset=utf-8\" />" +
+                   "<style>" +
+                   GetWordReportCss() +
+                   "body, p, div, span, td, th, li { font-family: 'Segoe UI', Arial, Helvetica, sans-serif; font-size: 11pt; }" +
+                   "p, div, li { margin: 0; mso-margin-top-alt: 0; margin-bottom: 0; line-height: normal; }" +
+                   "table { mso-table-lspace: 0; mso-table-rspace: 0; }" +
+                   "</style></head><body>" + (innerHtml ?? "") + "</body></html>";
+        }
+
+        private static AltChunk CreateHtmlAltChunk(MainDocumentPart mainPart, string innerHtml, string altChunkId)
+        {
+            var chunk = mainPart.AddAlternativeFormatImportPart(
+                AlternativeFormatImportPartType.Html, altChunkId);
+            var fullHtml = WrapHtmlForWord(innerHtml);
+            using (var ms = new MemoryStream(System.Text.Encoding.UTF8.GetBytes(fullHtml)))
+            {
+                chunk.FeedData(ms);
+            }
+            return new AltChunk() { Id = altChunkId };
+        }
+
+        public static async Task<byte[]> GetWordFile(string reportSql, string connectKey, string reportName, string chartData = null, bool allExpanded = false,
+            string expandSqls = null, List<ReportHeaderColumn> columns = null, bool includeSubtotal = false, bool pivot = false, string pivotColumn = null, string pivotFunction = null, string pageSize = "", string pageOrientation = "", string filterDetailsText = null,
+            string headerHtml = null, string footerHtml = null, bool headerEveryPage = false, bool footerEveryPage = false, string currentUserName = null, string currentUserRoles = null,
+            string customHtml = null)
+        {
+            bool hasCustomHtml = !string.IsNullOrWhiteSpace(customHtml);
+            // Only fetch tabular data when we are not rendering a custom HTML report.
+            var dt = hasCustomHtml ? new DataTable() : await BuildExportData(reportSql, connectKey, expandSqls, columns, pivot, pivotColumn, pivotFunction);
+            var subTotals = new decimal[dt.Columns.Count];
+            bool hasHeaderHtml = !string.IsNullOrWhiteSpace(headerHtml);
+            bool hasFooterHtml = !string.IsNullOrWhiteSpace(footerHtml);
+
+            using (MemoryStream memStream = new MemoryStream())
+            {
+                using (WordprocessingDocument wordDocument = WordprocessingDocument.Create(memStream, WordprocessingDocumentType.Document))
+                {
+                    MainDocumentPart mainPart = wordDocument.AddMainDocumentPart();
+                    mainPart.Document = new Document();
+                    Body body = mainPart.Document.AppendChild(new Body());
+                    string headerRelId = null;
+                    string footerRelId = null;
+
+                    string blankHeaderRelId = null;
+                    string blankFooterRelId = null;
+                    bool headerFirstPageOnly = hasHeaderHtml && !headerEveryPage;
+                    bool footerFirstPageOnly = hasFooterHtml && !footerEveryPage;
+
+                    if (hasHeaderHtml)
+                    {
+                        var processedHeader = SubstituteHtmlPlaceholders(headerHtml, currentUserName, currentUserRoles, 1, 1, useWordFields: true, reportName: reportName);
+                        var headerPart = mainPart.AddNewPart<HeaderPart>();
+                        headerRelId = mainPart.GetIdOfPart(headerPart);
+                        processedHeader = ConvertLayoutsForWord(processedHeader);
+                        var altHdrPart = headerPart.AddAlternativeFormatImportPart(AlternativeFormatImportPartType.Html);
+                        var altHdrRelId = headerPart.GetIdOfPart(altHdrPart);
+                        var fullHdrHtml = WrapHtmlForWord(processedHeader);
+                        using (var ms = new MemoryStream(System.Text.Encoding.UTF8.GetBytes(fullHdrHtml)))
+                        {
+                            altHdrPart.FeedData(ms);
+                        }
+
+                        var hdr = new Header();
+                        hdr.AddNamespaceDeclaration("w", "http://schemas.openxmlformats.org/wordprocessingml/2006/main");
+                        hdr.AppendChild(new AltChunk() { Id = altHdrRelId });
+                        headerPart.Header = hdr;
+
+                        if (headerFirstPageOnly)
+                        {
+                            // Empty header for subsequent pages
+                            var blankHeaderPart = mainPart.AddNewPart<HeaderPart>();
+                            blankHeaderRelId = mainPart.GetIdOfPart(blankHeaderPart);
+                            var blankHdr = new Header();
+                            blankHdr.AddNamespaceDeclaration("w", "http://schemas.openxmlformats.org/wordprocessingml/2006/main");
+                            blankHdr.AppendChild(new Paragraph());
+                            blankHeaderPart.Header = blankHdr;
+                        }
+                    }
+
+                    string processedFooterHtml = hasFooterHtml
+                        ? SubstituteHtmlPlaceholders(footerHtml, currentUserName, currentUserRoles, 1, 1, useWordFields: true, reportName: reportName)
+                        : null;
+                    if (hasFooterHtml)
+                    {
+                        var footerPart = mainPart.AddNewPart<FooterPart>();
+                        footerRelId = mainPart.GetIdOfPart(footerPart);
+                        processedFooterHtml = ConvertLayoutsForWord(processedFooterHtml);
+                        var altFtrPart = footerPart.AddAlternativeFormatImportPart(AlternativeFormatImportPartType.Html);
+                        var altFtrRelId = footerPart.GetIdOfPart(altFtrPart);
+                        var fullFtrHtml = WrapHtmlForWord(processedFooterHtml);
+                        using (var ms = new MemoryStream(System.Text.Encoding.UTF8.GetBytes(fullFtrHtml)))
+                        {
+                            altFtrPart.FeedData(ms);
+                        }
+
+                        var ftr = new Footer();
+                        ftr.AddNamespaceDeclaration("w", "http://schemas.openxmlformats.org/wordprocessingml/2006/main");
+                        ftr.AppendChild(new AltChunk() { Id = altFtrRelId });
+                        footerPart.Footer = ftr;
+
+                        if (footerFirstPageOnly)
+                        {
+                            // Empty footer for subsequent pages
+                            var blankFooterPart = mainPart.AddNewPart<FooterPart>();
+                            blankFooterRelId = mainPart.GetIdOfPart(blankFooterPart);
+                            var blankFtr = new Footer();
+                            blankFtr.AddNamespaceDeclaration("w", "http://schemas.openxmlformats.org/wordprocessingml/2006/main");
+                            blankFtr.AppendChild(new Paragraph());
+                            blankFooterPart.Footer = blankFtr;
+                        }
+                    }
+                    // Add report header
+                    Paragraph header = new Paragraph(new Run(new RunProperties()
+                    {
+                        FontSize = new DocumentFormat.OpenXml.Wordprocessing.FontSize() { Val = "28" },// Font size 14 points (2 * 14)
+                        Bold = new Bold(),
+                    }, new Text(reportName)));
+                    header.ParagraphProperties = new ParagraphProperties(new Justification() { Val = JustificationValues.Center });
+                    body.AppendChild(header);
+
+                    // Add filter details if present
+                    if (!string.IsNullOrEmpty(filterDetailsText))
+                    {
+                        Paragraph filterPara = new Paragraph(new Run(new RunProperties()
+                        {
+                            FontSize = new DocumentFormat.OpenXml.Wordprocessing.FontSize() { Val = "18" },
+                            Italic = new Italic(),
+                            Color = new DocumentFormat.OpenXml.Wordprocessing.Color() { Val = "475467" }
+                        }, new Text("Filters: " + filterDetailsText)));
+                        body.AppendChild(filterPara);
+                    }
+
+                    // Render chart
+                    if (!string.IsNullOrEmpty(chartData) && chartData != "undefined")
+                    {
+                        byte[] imageDecoded = Convert.FromBase64String(chartData.Substring(chartData.LastIndexOf(',') + 1));
+                        using (MemoryStream imageStream = new MemoryStream(imageDecoded))
+                        {
+                            ImagePart imagePart = mainPart.AddImagePart(ImagePartType.Jpeg);
+                            imagePart.FeedData(imageStream);
+                            // Specify the size in pixels and convert to EMUs
+                            int widthInPixels = 500;
+                            int heightInPixels = 400;
+                            long widthInEmus = widthInPixels * 9525;
+                            long heightInEmus = heightInPixels * 9525;
+                            AddImageToBody(wordDocument, mainPart.GetIdOfPart(imagePart), widthInEmus, heightInEmus);
+                        }
+                    }
+                    if (hasCustomHtml)
+                    {
+                        customHtml = ConvertLayoutsForWord(customHtml, addTableBorders: true);
+                        var altBodyPart = mainPart.AddAlternativeFormatImportPart(AlternativeFormatImportPartType.Html);
+                        var altBodyRelId = mainPart.GetIdOfPart(altBodyPart);
+                        var fullBodyHtml = WrapHtmlForWord(customHtml);
+                        using (var ms = new MemoryStream(System.Text.Encoding.UTF8.GetBytes(fullBodyHtml)))
+                        {
+                            altBodyPart.FeedData(ms);
+                        }
+                        body.AppendChild(new AltChunk() { Id = altBodyRelId });
+                        body.AppendChild(new Paragraph());
+                    }
+                    // Add data in table format
+                    else if (dt.Rows.Count > 0)
+                    {
+                        // Create table
+                        Table table = new Table();
+                        TableProperties props = new TableProperties(new Justification() { Val = JustificationValues.Center },
+                         new TableLayout() { Type = TableLayoutValues.Fixed },
+                         new TableBorders(
+                         new TopBorder { Val = new EnumValue<BorderValues>(BorderValues.Single), Size = 4, Color = "000000" },
+                         new BottomBorder { Val = new EnumValue<BorderValues>(BorderValues.Single), Size = 4, Color = "000000" },
+                         new LeftBorder { Val = new EnumValue<BorderValues>(BorderValues.Single), Size = 4, Color = "000000" },
+                         new RightBorder { Val = new EnumValue<BorderValues>(BorderValues.Single), Size = 4, Color = "000000" },
+                         new InsideHorizontalBorder { Val = new EnumValue<BorderValues>(BorderValues.Single), Size = 4, Color = "000000" },
+                         new InsideVerticalBorder { Val = new EnumValue<BorderValues>(BorderValues.Single), Size = 4, Color = "000000" }
+                         ));
+
+                        // Append table properties
+                        table.AppendChild<TableProperties>(props);
+                        // Add header row
+                        TableRow headerRow = new TableRow();
+                        // Calculate max text width for each column
+                        int[] maxColumnWidths = new int[dt.Columns.Count];
+                        foreach (DataColumn column in dt.Columns)
+                        {
+                            var headerText = (columns != null && columns.Count > column.Ordinal && !string.IsNullOrEmpty(columns[column.Ordinal].fieldLabel))
+                                ? columns[column.Ordinal].fieldLabel
+                                : column.ColumnName;
+                            maxColumnWidths[column.Ordinal] = EstimateTextWidth(headerText);
+                            RunProperties runProperties = new RunProperties(
+                                new Bold(),
+                                new DocumentFormat.OpenXml.Wordprocessing.FontSize() { Val = "16" }, // 8pt
+                                new DocumentFormat.OpenXml.Wordprocessing.Color() { Val = "156082" }
+                            );
+                            Run run = new Run(runProperties, new Text(headerText));
+                            ParagraphProperties paragraphProperties = new ParagraphProperties(
+                                new SpacingBetweenLines() { Before = "20", After = "20", Line = "220", LineRule = LineSpacingRuleValues.Auto },
+                                new Indentation() { Left = "40", Right = "40" }
+                            );
+                            Paragraph paragraph = new Paragraph(paragraphProperties, run);
+                            TableCell cell = new TableCell(paragraph);
+                            headerRow.AppendChild(cell);
+                        }
+                        // Header text alone underestimates a column, so sample the data too.
+                        var sampleRows = Math.Min(dt.Rows.Count, 200);
+                        for (var sr = 0; sr < sampleRows; sr++)
+                        {
+                            foreach (DataColumn column in dt.Columns)
+                            {
+                                var cellText = dt.Rows[sr][column.ColumnName]?.ToString() ?? "";
+                                if (cellText.Length > 40) cellText = cellText.Substring(0, 40);
+                                var w = EstimateTextWidth(cellText);
+                                if (w > maxColumnWidths[column.Ordinal]) maxColumnWidths[column.Ordinal] = w;
+                            }
+                        }
+
+                        // Word autofits an unsized table by splitting the page evenly between columns, so a
+                        // wide report ends up one character per line. Give it an explicit grid instead.
+                        for (var ci = 0; ci < maxColumnWidths.Length; ci++)
+                            maxColumnWidths[ci] = Math.Min(Math.Max(maxColumnWidths[ci] + 120, 700), 4320);
+
+                        // A fixed layout no longer shrinks to fit, so the grid has to stay inside the
+                        // printable area or the table bleeds off both edges.
+                        FitColumnWidthsToPage(maxColumnWidths, pageSize, pageOrientation);
+
+                        var tableGrid = new TableGrid();
+                        foreach (var gw in maxColumnWidths)
+                            tableGrid.Append(new GridColumn() { Width = gw.ToString() });
+                        table.InsertAfter(tableGrid, props);
+
+                        ApplyCellWidths(headerRow, maxColumnWidths);
+                        table.AppendChild(headerRow);
+                        // WORD Export page size setup
+                        if (!String.IsNullOrEmpty(pageSize))
+                        {
+                            UInt32Value widthTwips;
+                            UInt32Value heightTwips;
+                            switch (pageSize.ToUpper())
+                            {
+                                case "A4": // 210 × 297 mm
+                                    widthTwips = (UInt32Value)(210 * 56.7);
+                                    heightTwips = (UInt32Value)(297 * 56.7);
+                                    break;
+
+                                case "LEGAL": // 8.5 × 14 in
+                                    widthTwips = (UInt32Value)(8.5 * 1440);
+                                    heightTwips = (UInt32Value)(14 * 1440);
+                                    break;
+
+                                case "A3": // 297 × 420 mm
+                                    widthTwips = (UInt32Value)(297 * 56.7);
+                                    heightTwips = (UInt32Value)(420 * 56.7);
+                                    break;
+
+                                case "TABLOID": // 11 × 17 in
+                                    widthTwips = (UInt32Value)(11 * 1440);
+                                    heightTwips = (UInt32Value)(17 * 1440);
+                                    break;
+
+                                case "LETTER": // 8.5 × 11 in
+                                default:
+                                    widthTwips = (UInt32Value)(8.5 * 1440);
+                                    heightTwips = (UInt32Value)(11 * 1440);
+                                    break;
+                            }
+                            string safeOrientation = string.IsNullOrEmpty(pageOrientation)? "PORTRAIT": pageOrientation.ToUpper();
+                            // WORD Section Properties with Orientation
+                            var wordPageSize = new DocumentFormat.OpenXml.Wordprocessing.PageSize()
+                            {
+                                Width = widthTwips,
+                                Height = heightTwips,
+                                Orient = (safeOrientation == "LANDSCAPE")? PageOrientationValues.Landscape: PageOrientationValues.Portrait
+                            };
+                            // Landscape → swap width/height
+                            if (safeOrientation == "LANDSCAPE")
+                            {
+                                var temp = widthTwips;
+                                wordPageSize.Width = heightTwips;
+                                wordPageSize.Height = temp;
+                            }
+                            SectionProperties sectionProperties = new SectionProperties();
+                            if (!string.IsNullOrEmpty(headerRelId))
+                                sectionProperties.Append(new HeaderReference() { Type = HeaderFooterValues.Default, Id = headerRelId });
+                            if (!string.IsNullOrEmpty(footerRelId))
+                                sectionProperties.Append(new FooterReference() { Type = HeaderFooterValues.Default, Id = footerRelId });
+                            sectionProperties.Append(wordPageSize);
+                            body.Append(sectionProperties);
+                        }
+                        else
+                        {
+                            // Normalize column widths to fit the available width
+                            int totalWidth = 0;
+                            foreach (int width in maxColumnWidths)
+                            {
+                                totalWidth += width;
+                            }
+                            if (totalWidth > 13900)
+                            {
+                                // Set landscape orientation
+                                SectionProperties sectionProperties = new SectionProperties();
+                                if (!string.IsNullOrEmpty(headerRelId))
+                                    sectionProperties.Append(new HeaderReference() { Type = HeaderFooterValues.Default, Id = headerRelId });
+                                if (!string.IsNullOrEmpty(footerRelId))
+                                    sectionProperties.Append(new FooterReference() { Type = HeaderFooterValues.Default, Id = footerRelId });
+                                DocumentFormat.OpenXml.Wordprocessing.PageSize wordPageSize = new DocumentFormat.OpenXml.Wordprocessing.PageSize() { Width = Convert.ToUInt32(totalWidth + (1440 * 2)), Orient = PageOrientationValues.Landscape };
+                                sectionProperties.Append(wordPageSize);
+                                body.Append(sectionProperties);
+                            }
+                            else
+                            {
+                                // Set page orientation to landscape
+                                SectionProperties sectionProps = new SectionProperties();
+                                if (!string.IsNullOrEmpty(headerRelId))
+                                    sectionProps.Append(new HeaderReference() { Type = HeaderFooterValues.Default, Id = headerRelId });
+                                if (!string.IsNullOrEmpty(footerRelId))
+                                    sectionProps.Append(new FooterReference() { Type = HeaderFooterValues.Default, Id = footerRelId });
+                                DocumentFormat.OpenXml.Wordprocessing.PageSize defaultpageSize = new DocumentFormat.OpenXml.Wordprocessing.PageSize()
+                                {
+                                    Orient = PageOrientationValues.Landscape,
+                                    Width = 16838,  // 11.69 inch in Twips (297 mm)
+                                };
+                                sectionProps.Append(defaultpageSize);
+                                body.Append(sectionProps);
+                            }
+                        }
+                        // Add data rows
+                        foreach (DataRow row in dt.Rows)
+                        {
+                            var i = 0;
+                            TableRow dataRow = new TableRow();
+                            foreach (DataColumn column in dt.Columns)
+                            {
+                                var value = row[column.ColumnName].ToString();
+                                var formatColumn = GetColumnFormatting(column, columns, ref value);
+                                if (includeSubtotal)
+                                {
+                                    if (formatColumn.isNumeric && !(formatColumn?.dontSubTotal ?? false))
+                                    {
+                                        subTotals[i] += Convert.ToDecimal(row[column.ColumnName]);
+                                    }
+                                }
+                                RunProperties dataRunProps = new RunProperties(
+                                    new DocumentFormat.OpenXml.Wordprocessing.FontSize() { Val = "16" } // 8pt
+                                );
+                                Run run = new Run(dataRunProps, new Text(value));
+                                ParagraphProperties paragraphProperties = new ParagraphProperties(
+                                    new SpacingBetweenLines() { Before = "20", After = "20", Line = "220", LineRule = LineSpacingRuleValues.Auto },
+                                    new Indentation() { Left = "40", Right = "40" }
+                                );
+                                Paragraph paragraph = new Paragraph(paragraphProperties, run);
+                                TableCell cell = new TableCell(paragraph);
+                                dataRow.AppendChild(cell);
+                                i++;
+                            }
+                            ApplyCellWidths(dataRow, maxColumnWidths);
+                            table.AppendChild(dataRow);
+                        }
+                        if (includeSubtotal)
+                        {
+                            TableRow dataRow = new TableRow();
+
+                            for (int j = 0; j < dt.Columns.Count; j++)
+                            {
+                                var value = subTotals[j].ToString();
+                                var dc = dt.Columns[j];
+                                var formatColumn = GetColumnFormatting(dc, columns, ref value);
+                                bool isNumericAndNotExcluded = formatColumn?.isNumeric == true && !(formatColumn?.dontSubTotal ?? false);
+                                RunProperties stRunProps = new RunProperties(
+                                    new Bold(),
+                                    new DocumentFormat.OpenXml.Wordprocessing.FontSize() { Val = "16" }
+                                );
+                                Run run = new Run(stRunProps, new Text(isNumericAndNotExcluded ? value : " "));
+                                ParagraphProperties paragraphProperties = new ParagraphProperties(
+                                    new SpacingBetweenLines() { Before = "20", After = "20", Line = "220", LineRule = LineSpacingRuleValues.Auto },
+                                    new Indentation() { Left = "40", Right = "40" }
+                                );
+                                Paragraph paragraph = new Paragraph(paragraphProperties, run);
+                                TableCell cell = new TableCell(paragraph);
+                                dataRow.AppendChild(cell);
+                            }
+
+                            ApplyCellWidths(dataRow, maxColumnWidths);
+                            table.AppendChild(dataRow);
+                        }
+
+                        // Add expanded data if applicable
+                        if (allExpanded)
+                        {
+                            Paragraph expandedData = new Paragraph(new Run(new Text("Additional expanded data")));
+                            body.AppendChild(expandedData);
+                        }
+                        body.AppendChild(table);
+                    }
+                    else
+                    {
+                        Paragraph expandedData = new Paragraph(new Run(new Text("No records found")));
+                        body.AppendChild(expandedData);
+                    }
+                    // Ensure cells do not wrap their text; also tighten cell padding
+                    foreach (TableCell cell in body.Descendants<TableCell>())
+                    {
+                        cell.TableCellProperties ??= new TableCellProperties();
+                        if (!cell.TableCellProperties.Elements<NoWrap>().Any())
+                            cell.TableCellProperties.Append(new NoWrap());
+                        foreach (var existingMargin in cell.TableCellProperties.Elements<TableCellMargin>().ToList())
+                            existingMargin.Remove();
+                        cell.TableCellProperties.Append(new TableCellMargin(
+                            new TopMargin() { Width = "20", Type = TableWidthUnitValues.Dxa },
+                            new BottomMargin() { Width = "20", Type = TableWidthUnitValues.Dxa },
+                            new LeftMargin() { Width = "40", Type = TableWidthUnitValues.Dxa },
+                            new RightMargin() { Width = "40", Type = TableWidthUnitValues.Dxa }
+                        ));
+                    }
+                    {
+                        foreach (var sp in body.Elements<SectionProperties>().ToList())
+                        {
+                            sp.Remove();
+                        }
+
+                        var finalSectionProps = new SectionProperties();
+
+                        bool useTitlePage = headerFirstPageOnly || footerFirstPageOnly;
+
+                        if (!string.IsNullOrEmpty(headerRelId))
+                        {
+                            if (headerFirstPageOnly)
+                            {
+                                finalSectionProps.Append(new HeaderReference() { Type = HeaderFooterValues.First, Id = headerRelId });
+                                if (!string.IsNullOrEmpty(blankHeaderRelId))
+                                    finalSectionProps.Append(new HeaderReference() { Type = HeaderFooterValues.Default, Id = blankHeaderRelId });
+                            }
+                            else
+                            {
+                                finalSectionProps.Append(new HeaderReference() { Type = HeaderFooterValues.Default, Id = headerRelId });
+                                if (useTitlePage)
+                                    finalSectionProps.Append(new HeaderReference() { Type = HeaderFooterValues.First, Id = headerRelId });
+                            }
+                        }
+                        if (!string.IsNullOrEmpty(footerRelId))
+                        {
+                            if (footerFirstPageOnly)
+                            {
+                                finalSectionProps.Append(new FooterReference() { Type = HeaderFooterValues.First, Id = footerRelId });
+                                if (!string.IsNullOrEmpty(blankFooterRelId))
+                                    finalSectionProps.Append(new FooterReference() { Type = HeaderFooterValues.Default, Id = blankFooterRelId });
+                            }
+                            else
+                            {
+                                finalSectionProps.Append(new FooterReference() { Type = HeaderFooterValues.Default, Id = footerRelId });
+                                if (useTitlePage)
+                                    finalSectionProps.Append(new FooterReference() { Type = HeaderFooterValues.First, Id = footerRelId });
+                            }
+                        }
+
+                        // Enable "different first page" so Word honors the "first" header/footer refs
+                        if (useTitlePage)
+                        {
+                            finalSectionProps.Append(new TitlePage());
+                        }
+
+                        // Determine page size + orientation
+                        DocumentFormat.OpenXml.Wordprocessing.PageSize finalPageSize = null;
+                        if (!String.IsNullOrEmpty(pageSize))
+                        {
+                            UInt32Value widthTwips;
+                            UInt32Value heightTwips;
+                            switch (pageSize.ToUpper())
+                            {
+                                case "A4":
+                                    widthTwips = (UInt32Value)(210 * 56.7);
+                                    heightTwips = (UInt32Value)(297 * 56.7);
+                                    break;
+                                case "LEGAL":
+                                    widthTwips = (UInt32Value)(8.5 * 1440);
+                                    heightTwips = (UInt32Value)(14 * 1440);
+                                    break;
+                                case "A3":
+                                    widthTwips = (UInt32Value)(297 * 56.7);
+                                    heightTwips = (UInt32Value)(420 * 56.7);
+                                    break;
+                                case "TABLOID":
+                                    widthTwips = (UInt32Value)(11 * 1440);
+                                    heightTwips = (UInt32Value)(17 * 1440);
+                                    break;
+                                case "LETTER":
+                                default:
+                                    widthTwips = (UInt32Value)(8.5 * 1440);
+                                    heightTwips = (UInt32Value)(11 * 1440);
+                                    break;
+                            }
+                            string safeOrientation = string.IsNullOrEmpty(pageOrientation) ? "PORTRAIT" : pageOrientation.ToUpper();
+                            finalPageSize = new DocumentFormat.OpenXml.Wordprocessing.PageSize()
+                            {
+                                Width = widthTwips,
+                                Height = heightTwips,
+                                Orient = (safeOrientation == "LANDSCAPE") ? PageOrientationValues.Landscape : PageOrientationValues.Portrait
+                            };
+                            if (safeOrientation == "LANDSCAPE")
+                            {
+                                var temp = finalPageSize.Width;
+                                finalPageSize.Width = finalPageSize.Height;
+                                finalPageSize.Height = temp;
+                            }
+                        }
+                        else
+                        {
+                            // Default landscape A4-ish
+                            finalPageSize = new DocumentFormat.OpenXml.Wordprocessing.PageSize()
+                            {
+                                Orient = PageOrientationValues.Landscape,
+                                Width = 16838
+                            };
+                        }
+                        finalSectionProps.Append(finalPageSize);
+                        body.AppendChild(finalSectionProps);
+                    }
+
+                    wordDocument.Save();
+                }
+                return memStream.ToArray();
+            }
+        }
+        /// <summary>
+        /// Parses a descendant selector such as "#report-footer .footer-row a" into a target rule plus
+        /// its ancestor parts. 
+        /// </summary>
+        private static CssRule ParseSelectorChain(string selector)
+        {
+            if (string.IsNullOrEmpty(selector)) return null;
+            if (Regex.IsMatch(selector, @"[+~:\[\]]")) return null;
+
+            var parts = Regex.Split(selector.Replace(">", " ").Trim(), @"\s+")
+                            .Where(x => x.Length > 0).ToArray();
+            if (parts.Length == 0) return null;
+
+            var parsed = new List<CssRule>();
+            foreach (var part in parts)
+            {
+                var simple = ParseSimpleSelector(part);
+                if (simple == null) return null;
+                parsed.Add(simple);
+            }
+
+            var target = parsed[parsed.Count - 1];
+            target.Ancestors = parsed.Take(parsed.Count - 1).ToList();
+            target.Specificity = parsed.Sum(p => (p.Id != null ? 100 : 0) + (p.Classes.Count * 10) + (p.Tag != null ? 1 : 0));
+            return target;
+        }
+
+        private static bool MatchesSimple(CssRule rule, HtmlNode el)
+        {
+            if (el == null || el.NodeType != HtmlNodeType.Element) return false;
+            if (rule.Tag != null && rule.Tag != el.Name.ToLowerInvariant()) return false;
+            if (rule.Id != null && rule.Id != el.GetAttributeValue("id", "")) return false;
+            if (rule.Classes.Count > 0)
+            {
+                var classes = el.GetAttributeValue("class", "")
+                    .Split(new[] { ' ' }, StringSplitOptions.RemoveEmptyEntries).ToHashSet();
+                if (!rule.Classes.All(c => classes.Contains(c))) return false;
+            }
+            return true;
+        }
+
+        private static bool RuleMatches(CssRule rule, HtmlNode el)
+        {
+            if (!MatchesSimple(rule, el)) return false;
+            if (rule.Ancestors.Count == 0) return true;
+
+            var remaining = new Stack<CssRule>(rule.Ancestors);   // innermost ancestor on top
+            var parent = el.ParentNode;
+            while (parent != null && remaining.Count > 0)
+            {
+                if (MatchesSimple(remaining.Peek(), parent)) remaining.Pop();
+                parent = parent.ParentNode;
+            }
+            return remaining.Count == 0;
+        }
+
+        private static CssRule ParseSimpleSelector(string selector)
+        {
+            if (string.IsNullOrEmpty(selector)) return null;
+            if (Regex.IsMatch(selector, @"[\s>+~:\[\]]")) return null;
+
+            var match = Regex.Match(selector, @"^([a-zA-Z][a-zA-Z0-9]*)?((?:#[a-zA-Z0-9_-]+)?)((?:\.[a-zA-Z0-9_-]+)*)$");
+            if (!match.Success) return null;
+
+            var rule = new CssRule();
+            if (match.Groups[1].Success && match.Groups[1].Value.Length > 0)
+                rule.Tag = match.Groups[1].Value.ToLowerInvariant();
+            if (match.Groups[2].Success && match.Groups[2].Value.Length > 0)
+                rule.Id = match.Groups[2].Value.Substring(1);
+            if (match.Groups[3].Success && match.Groups[3].Value.Length > 0)
+                rule.Classes = match.Groups[3].Value.Split('.', StringSplitOptions.RemoveEmptyEntries).ToList();
+
+            if (rule.Tag == null && rule.Id == null && rule.Classes.Count == 0) return null;
+            return rule;
+        }
+
+        private static Dictionary<string, (string Value, bool Important)> ParseDeclarationsWithImportant(string declText)
+        {
+            var result = new Dictionary<string, (string, bool)>();
+            if (string.IsNullOrWhiteSpace(declText)) return result;
+
+            foreach (var part in declText.Split(';'))
+            {
+                int idx = part.IndexOf(':');
+                if (idx <= 0) continue;
+
+                string prop = part.Substring(0, idx).Trim().ToLowerInvariant();
+                string rawVal = part.Substring(idx + 1).Trim();
+                bool important = Regex.IsMatch(rawVal, "!important", RegexOptions.IgnoreCase);
+                string val = Regex.Replace(rawVal, "!important", "", RegexOptions.IgnoreCase).Trim().TrimEnd(';').Trim();
+
+                if (!string.IsNullOrEmpty(val))
+                    result[prop] = (val, important);
+            }
+            return result;
+        }
+        private static string StripCssComments(string css)
+        {
+            if (string.IsNullOrEmpty(css)) return css;
+            return Regex.Replace(css, @"/\*.*?\*/", "", RegexOptions.Singleline);
+        }
+        private static List<CssRule> ParseAllCssRules(string css)
+        {
+            var rules = new List<CssRule>();
+            if (string.IsNullOrWhiteSpace(css)) return rules;
+
+            css = StripCssComments(css);
+
+            foreach (Match ruleMatch in CssRuleRegex.Matches(css))
+            {
+                string selectorPart = ruleMatch.Groups[1].Value.Trim();
+                string declPart = ruleMatch.Groups[2].Value.Trim();
+
+                var declarations = ParseDeclarationsWithImportant(declPart);
+                if (declarations.Count == 0) continue;
+
+                foreach (var rawSelector in selectorPart.Split(','))
+                {
+                    var parsed = ParseSelectorChain(rawSelector.Trim());
+                    if (parsed == null) continue;
+
+                    parsed.Declarations = declarations;
+                    parsed.Order = rules.Count;
+                    rules.Add(parsed);
+                }
+            }
+            return rules;
+        }
+        private static string ApplyExternalCssInline(string customHtml, params string[] cssSources)
+        {
+            var doc = new HtmlAgilityPack.HtmlDocument();
+            doc.LoadHtml(customHtml);
+
+            var allRules = new List<CssRule>();
+            foreach (var css in cssSources)
+                allRules.AddRange(ParseAllCssRules(css));
+
+            if (allRules.Count == 0) return customHtml;
+
+            var allElements = doc.DocumentNode.SelectNodes("//*[@class or @id]");
+            if (allElements == null) return customHtml;
+
+            var orderedRules = allRules.OrderBy(r => r.Specificity).ThenBy(r => r.Order).ToList();
+
+            foreach (var el in allElements)
+            {
+                var normal = new Dictionary<string, string>();
+                var important = new Dictionary<string, string>();
+
+                foreach (var rule in orderedRules)
+                {
+                    if (!RuleMatches(rule, el)) continue;
+
+                    foreach (var kv in rule.Declarations)
+                    {
+                        if (kv.Value.Important) important[kv.Key] = kv.Value.Value;
+                        else normal[kv.Key] = kv.Value.Value;
+                    }
+                }
+
+                if (normal.Count == 0 && important.Count == 0) continue;
+
+                var finalDecls = new Dictionary<string, string>(normal);
+                foreach (var kv in important) finalDecls[kv.Key] = kv.Value;
+
+                string existingStyle = el.GetAttributeValue("style", "");
+                var existingProps = ParseDeclarations(existingStyle);
+
+                var sb = new StringBuilder();
+                foreach (var kv in finalDecls)
+                    if (!existingProps.ContainsKey(kv.Key)) 
+                        sb.Append($"{kv.Key}:{kv.Value}; ");
+
+                sb.Append(existingStyle);
+                el.SetAttributeValue("style", sb.ToString().Trim());
+            }
+
+            return doc.DocumentNode.OuterHtml;
+        }
+
+        private static Dictionary<string, string> ParseDeclarations(string declText)
+        {
+            var result = new Dictionary<string, string>();
+            if (string.IsNullOrWhiteSpace(declText)) return result;
+
+            foreach (var part in declText.Split(';'))
+            {
+                int idx = part.IndexOf(':');
+                if (idx <= 0) continue;
+
+                string prop = part.Substring(0, idx).Trim().ToLowerInvariant();
+                string val = Regex.Replace(part.Substring(idx + 1), "!important", "", RegexOptions.IgnoreCase)
+                                   .Trim().TrimEnd(';').Trim();
+
+                if (!string.IsNullOrEmpty(val))
+                    result[prop] = val;
+            }
+            return result;
+        }
+        private static string RemoveHiddenElementsForWord(string customHtml)
+        {
+            var doc = new HtmlAgilityPack.HtmlDocument();
+            doc.LoadHtml(customHtml);
+
+            var hiddenNodes = doc.DocumentNode.SelectNodes(
+                "//*[@style and (contains(translate(@style,' ',''),'display:none') " +
+                "or contains(translate(@style,' ',''),'visibility:hidden'))]");
+
+            if (hiddenNodes != null)
+            {
+                foreach (var node in hiddenNodes.ToList())
+                {
+                    node.Remove();  
+                }
+            }
+
+            return doc.DocumentNode.OuterHtml;
+        }
+        private static string ConvertBootstrapGridToTable(string customHtml)
+        {
+            var doc = new HtmlAgilityPack.HtmlDocument();
+            doc.LoadHtml(customHtml);
+
+            var rows = doc.DocumentNode.SelectNodes("//div[contains(concat(' ', normalize-space(@class), ' '), ' row ')]");
+            if (rows == null) return customHtml;
+
+            foreach (var row in rows.ToList())
+            {
+                var cols = row.SelectNodes("./div[contains(@class,'col-')]");
+                if (cols == null) continue;
+
+                string rowStyle = row.GetAttributeValue("style", "");
+                string rowBg = ExtractStyleValue(rowStyle, "background-color");
+
+                var table = doc.CreateElement("table");
+                table.SetAttributeValue("width", "100%");
+                var tableStyle = "border-collapse:collapse; margin-bottom:10px;";
+                if (!string.IsNullOrEmpty(rowBg))
+                    tableStyle += $" background-color:{rowBg};";
+                table.SetAttributeValue("style", tableStyle);
+
+                var tr = doc.CreateElement("tr");
+
+                foreach (var col in cols)
+                {
+                    var td = doc.CreateElement("td");
+
+                    int colSpan = GetBootstrapColSpan(col.GetAttributeValue("class", ""));
+                    double widthPercent = Math.Round(colSpan / 12.0 * 100, 2);
+                    td.SetAttributeValue("width", $"{widthPercent}%");
+
+                    string colStyle = col.GetAttributeValue("style", "");
+                    string colBg = ExtractStyleValue(colStyle, "background-color");
+                    string colPadding = ExtractStyleValue(colStyle, "padding");
+                    string colTextAlign = ExtractStyleValue(colStyle, "text-align");
+                    string colVertAlign = ExtractStyleValue(colStyle, "vertical-align");
+
+                    var tdStyleParts = new List<string>();
+                    tdStyleParts.Add($"vertical-align:{(string.IsNullOrEmpty(colVertAlign) ? "top" : colVertAlign)}");
+                    tdStyleParts.Add($"padding:{(string.IsNullOrEmpty(colPadding) ? "8px" : colPadding)}");
+                    if (!string.IsNullOrEmpty(colBg))
+                        tdStyleParts.Add($"background-color:{colBg}");
+                    if (!string.IsNullOrEmpty(colTextAlign))
+                        tdStyleParts.Add($"text-align:{colTextAlign}");
+
+                    td.SetAttributeValue("style", string.Join("; ", tdStyleParts) + ";");
+
+                    if (!string.IsNullOrEmpty(colStyle))
+                    {
+                        var cleanedStyle = Regex.Replace(
+                            colStyle, @"(background-color|padding|text-align|vertical-align)\s*:\s*[^;]+;?", "",
+                            RegexOptions.IgnoreCase);
+                        col.SetAttributeValue("style", cleanedStyle);
+                    }
+
+                    td.InnerHtml = col.InnerHtml;
+                    tr.AppendChild(td);
+                }
+                table.AppendChild(tr);
+                row.ParentNode.ReplaceChild(table, row);
+            }
+            return doc.DocumentNode.OuterHtml;
+        }
+
+        private static int GetBootstrapColSpan(string classAttr)
+        {
+            if (string.IsNullOrEmpty(classAttr)) return 12;
+
+            var match = Regex.Match(classAttr, @"col-(?:xs-|sm-|md-|lg-|xl-)?(\d+)");
+            if (match.Success) return int.Parse(match.Groups[1].Value);
+
+            return 12;
+        }
+
+        private static string ConvertFlexToTable(string customHtml)
+        {
+            var doc = new HtmlAgilityPack.HtmlDocument();
+            doc.LoadHtml(customHtml);
+
+            bool convertedAny;
+            do
+            {
+                convertedAny = false;
+
+                var flexNodes = doc.DocumentNode
+                    .SelectNodes("//*[contains(translate(@style,' ',''),'display:flex')]");
+
+                if (flexNodes == null) break;
+
+                var deepestFirst = flexNodes.OrderByDescending(GetDepth).ToList();
+
+                foreach (var flexNode in deepestFirst)
+                {
+                    ConvertSingleFlexNode(doc, flexNode);
+                    convertedAny = true;
+                    break;
+                }
+
+            } while (convertedAny);
+
+            return doc.DocumentNode.OuterHtml;
+        }
+        private static string WrapPlainBackgroundDivsInTable(string customHtml)
+        {
+            var doc = new HtmlAgilityPack.HtmlDocument();
+            doc.LoadHtml(customHtml);
+            bool convertedAny;
+            do
+            {
+                convertedAny = false;
+                var candidates = doc.DocumentNode.SelectNodes(
+                    "//*[contains(translate(@style,' ',''),'background-color:') and not(self::table) and not(self::td) and not(self::tr) and not(self::th)]");
+
+                if (candidates == null) break;
+                var shallowestFirst = candidates.OrderBy(GetDepth).ToList();
+
+                foreach (var node in shallowestFirst)
+                {
+                    if (node.Ancestors("table").Any()) continue;
+                    WrapSingleBackgroundDiv(doc, node);
+                    convertedAny = true;
+                    break; 
+                }
+            } while (convertedAny);
+            return doc.DocumentNode.OuterHtml;
+        }
+        /// <summary>
+        /// Header and footer fragments often right align an element with margin-left:auto, which only works
+        /// inside a flex container. Word has no flex, so split the top level into a two column table.
+        /// </summary>
+        private static string ConvertAutoMarginToTable(string customHtml)
+        {
+            var doc = new HtmlAgilityPack.HtmlDocument();
+            doc.LoadHtml(customHtml);
+
+            var topLevel = doc.DocumentNode.ChildNodes
+                .Where(n => n.NodeType == HtmlNodeType.Element)
+                .ToList();
+            if (topLevel.Count < 2) return customHtml;
+
+            var rightStart = topLevel.FindIndex(n =>
+                n.GetAttributeValue("style", "").Replace(" ", "").IndexOf("margin-left:auto", StringComparison.OrdinalIgnoreCase) >= 0);
+            if (rightStart <= 0) return customHtml;
+
+            var table = doc.CreateElement("table");
+            table.SetAttributeValue("width", "100%");
+            table.SetAttributeValue("style", "border-collapse:collapse; width:100%;");
+            var tr = doc.CreateElement("tr");
+
+            var leftTd = doc.CreateElement("td");
+            leftTd.SetAttributeValue("style", "vertical-align:middle; text-align:left;");
+            var rightTd = doc.CreateElement("td");
+            rightTd.SetAttributeValue("style", "vertical-align:middle; text-align:right;");
+
+            for (var i = 0; i < topLevel.Count; i++)
+            {
+                var cell = i < rightStart ? leftTd : rightTd;
+                // margin-left:auto has no meaning once the cell handles alignment
+                var style = topLevel[i].GetAttributeValue("style", "");
+                if (!string.IsNullOrEmpty(style))
+                {
+                    topLevel[i].SetAttributeValue("style",
+                        Regex.Replace(style, @"margin-left\s*:\s*auto\s*;?", "", RegexOptions.IgnoreCase).Trim());
+                }
+                cell.AppendChild(topLevel[i].CloneNode(true));
+            }
+
+            tr.AppendChild(leftTd);
+            tr.AppendChild(rightTd);
+            table.AppendChild(tr);
+
+            foreach (var n in topLevel) n.Remove();
+            doc.DocumentNode.AppendChild(table);
+
+            return doc.DocumentNode.OuterHtml;
+        }
+
+        public static string ConvertLayoutsForWord(string customHtml, bool addTableBorders = false)
+        {
+            customHtml = ApplyExternalCssInline(customHtml, GetWordReportCss());
+            customHtml = RemoveHiddenElementsForWord(customHtml);
+            var doc = new HtmlAgilityPack.HtmlDocument();
+            doc.LoadHtml(customHtml);
+            string result = doc.DocumentNode.OuterHtml;
+
+            result = ConvertBootstrapGridToTable(result);
+            result = ConvertFlexToTable(result);
+            result = ConvertGridToTable(result);
+            result = ConvertAutoMarginToTable(result);
+            result = TightenTableCellsForWord(result);
+            if (addTableBorders) result = EnsureTableBordersForWord(result);
+            result = WrapPlainBackgroundDivsInTable(result); // *** naya step ***
+            result = EnsureTableBackgroundCompat(result);
+            result = FixImageSizingForWord(result);
+
+            return result;
+        }
+        private static void WrapSingleBackgroundDiv(HtmlAgilityPack.HtmlDocument doc, HtmlNode node)
+        {
+            string style = node.GetAttributeValue("style", "");
+            string bg = ExtractStyleValue(style, "background-color");
+            if (string.IsNullOrEmpty(bg)) return;
+
+            string remainingStyle = Regex.Replace(style, @"background-color\s*:\s*[^;]+;?", "", RegexOptions.IgnoreCase).Trim();
+
+            var table = doc.CreateElement("table");
+            table.SetAttributeValue("width", "100%");
+            table.SetAttributeValue("style", $"border-collapse:collapse; width:100%; background-color:{bg};");
+
+            var tr = doc.CreateElement("tr");
+            var td = doc.CreateElement("td");
+            td.SetAttributeValue("style", $"background-color:{bg}; {remainingStyle}");
+            td.InnerHtml = node.InnerHtml; // andar ka poora content copy karo
+
+            tr.AppendChild(td);
+            table.AppendChild(tr);
+
+            node.ParentNode.ReplaceChild(table, node);
+        }
+        private static void ConvertSingleFlexNode(HtmlAgilityPack.HtmlDocument doc, HtmlNode flexNode)
+        {
+            var style = flexNode.GetAttributeValue("style", "");
+            var children = flexNode.ChildNodes.Where(n => n.NodeType == HtmlNodeType.Element).ToList();
+            if (children.Count == 0) return;
+
+            bool isColumn = ExtractStyleValue(style, "flex-direction")?.Trim() == "column";
+            string justify = ExtractStyleValue(style, "justify-content")?.Trim();
+            string align = ExtractStyleValue(style, "align-items")?.Trim();
+            string bg = ExtractStyleValue(style, "background-color");
+            string padding = ExtractStyleValue(style, "padding");
+
+            string hAlign, vAlign;
+
+            if (isColumn)
+            {
+                hAlign = align switch { "center" => "center", "flex-end" => "right", _ => "left" };
+                vAlign = justify switch { "flex-start" => "top", "flex-end" => "bottom", "center" => "middle", _ => "top" };
+            }
+            else
+            {
+                hAlign = justify switch { "center" => "center", "flex-end" => "right", "space-between" => "left", _ => "left" };
+                vAlign = align switch { "flex-start" => "top", "flex-end" => "bottom", _ => "middle" };
+            }
+
+            string bgStyle = string.IsNullOrEmpty(bg) ? "" : $"background-color:{bg};";
+
+            var wrapper = doc.CreateElement("div");
+            if (!string.IsNullOrEmpty(bgStyle)) wrapper.SetAttributeValue("style", bgStyle);
+
+            var table = doc.CreateElement("table");
+            table.SetAttributeValue("style", $"border-collapse:collapse; width:100%; {bgStyle}");
+            table.SetAttributeValue("width", "100%");
+
+            if (isColumn)
+            {
+                foreach (var child in children)
+                {
+                    var tr = doc.CreateElement("tr");
+                    var td = doc.CreateElement("td");
+                    td.SetAttributeValue("style",
+                        $"vertical-align:{vAlign}; text-align:{hAlign}; padding:{(string.IsNullOrEmpty(padding) ? "0" : padding)}; {bgStyle}");
+                    td.InnerHtml = child.OuterHtml;
+                    tr.AppendChild(td);
+                    table.AppendChild(tr);
+                }
+            }
+            else
+            {
+                var tr = doc.CreateElement("tr");
+                for (int i = 0; i < children.Count; i++)
+                {
+                    var td = doc.CreateElement("td");
+                    string cellAlign = (justify == "space-between" && i == children.Count - 1) ? "right" : hAlign;
+                    td.SetAttributeValue("style",
+                        $"vertical-align:{vAlign}; text-align:{cellAlign}; padding:{(string.IsNullOrEmpty(padding) ? "0" : padding)}; {bgStyle}");
+                    td.InnerHtml = children[i].OuterHtml;
+                    tr.AppendChild(td);
+                }
+                table.AppendChild(tr);
+            }
+
+            wrapper.AppendChild(table);
+            flexNode.ParentNode.ReplaceChild(wrapper, flexNode);
+        }
+
+        private static string ConvertGridToTable(string customHtml)
+        {
+            var doc = new HtmlAgilityPack.HtmlDocument();
+            doc.LoadHtml(customHtml);
+
+            bool convertedAny;
+            do
+            {
+                convertedAny = false;
+
+                var gridNodes = doc.DocumentNode
+                    .SelectNodes("//*[contains(translate(@style,' ',''),'display:grid')]");
+
+                if (gridNodes == null) break;
+
+                var deepestFirst = gridNodes.OrderByDescending(GetDepth).ToList();
+
+                foreach (var gridNode in deepestFirst)
+                {
+                    ConvertSingleGridNode(doc, gridNode);
+                    convertedAny = true;
+                    break;
+                }
+
+            } while (convertedAny);
+
+            return doc.DocumentNode.OuterHtml;
+        }
+
+        private static void ConvertSingleGridNode(HtmlAgilityPack.HtmlDocument doc, HtmlNode gridNode)
+        {
+            var style = gridNode.GetAttributeValue("style", "");
+            var children = gridNode.ChildNodes.Where(n => n.NodeType == HtmlNodeType.Element).ToList();
+            if (children.Count == 0) return;
+
+            string templateCols = ExtractStyleValue(style, "grid-template-columns");
+            int colCount = GetColumnCount(templateCols, children.Count);
+
+            string columnGap = ExtractStyleValue(style, "column-gap") ?? ExtractStyleValue(style, "gap") ?? "0px";
+            string containerBg = ExtractStyleValue(style, "background-color");
+
+            var wrapper = doc.CreateElement("div");
+            if (!string.IsNullOrEmpty(containerBg))
+                wrapper.SetAttributeValue("style", $"background-color:{containerBg};");
+
+            var table = doc.CreateElement("table");
+            table.SetAttributeValue("width", "100%");
+            table.SetAttributeValue("style",
+                $"border-collapse:collapse; width:100%;{(string.IsNullOrEmpty(containerBg) ? "" : $" background-color:{containerBg};")}");
+            table.SetAttributeValue("cellspacing", "0");
+
+            for (int i = 0; i < children.Count; i += colCount)
+            {
+                var tr = doc.CreateElement("tr");
+                var rowChildren = children.Skip(i).Take(colCount).ToList();
+
+                foreach (var child in rowChildren)
+                {
+                    var td = doc.CreateElement("td");
+                    var childStyle = child.GetAttributeValue("style", "");
+                    string childBg = ExtractStyleValue(childStyle, "background-color");
+                    string childPadding = ExtractStyleValue(childStyle, "padding") ?? "10px";
+
+                    var tdStyleParts = new List<string> { "vertical-align:top", $"padding:{childPadding}" };
+                    if (!string.IsNullOrEmpty(childBg)) tdStyleParts.Add($"background-color:{childBg}");
+                    if (columnGap != "0px" && rowChildren.IndexOf(child) < rowChildren.Count - 1)
+                        tdStyleParts.Add($"padding-right:{columnGap}");
+
+                    td.SetAttributeValue("style", string.Join("; ", tdStyleParts) + ";");
+                    td.SetAttributeValue("width", $"{100 / colCount}%");
+
+                    if (!string.IsNullOrEmpty(childBg))
+                    {
+                        var cleanedStyle = Regex.Replace(childStyle, @"background-color\s*:\s*[^;]+;?", "", RegexOptions.IgnoreCase);
+                        child.SetAttributeValue("style", cleanedStyle);
+                    }
+
+                    td.InnerHtml = child.OuterHtml;
+                    tr.AppendChild(td);
+                }
+                table.AppendChild(tr);
+            }
+
+            wrapper.AppendChild(table);
+            gridNode.ParentNode.ReplaceChild(wrapper, gridNode);
+        }
+
+        private static int GetColumnCount(string templateCols, int fallbackChildCount)
+        {
+            if (string.IsNullOrEmpty(templateCols)) return fallbackChildCount;
+
+            var repeatMatch = Regex.Match(templateCols, @"repeat\(\s*(\d+)\s*,");
+            if (repeatMatch.Success) return int.Parse(repeatMatch.Groups[1].Value);
+
+            var parts = templateCols.Trim().Split(new[] { ' ' }, StringSplitOptions.RemoveEmptyEntries);
+            return parts.Length > 0 ? parts.Length : fallbackChildCount;
+        }
+
+        // =========================================================================
+        // WORD-COMPATIBILITY FIXUPS
+        // =========================================================================
+
+        private static string EnsureTableBackgroundCompat(string customHtml)
+        {
+            var doc = new HtmlAgilityPack.HtmlDocument();
+            doc.LoadHtml(customHtml);
+
+            var elements = doc.DocumentNode.SelectNodes("//table | //td | //tr");
+            if (elements == null) return customHtml;
+
+            foreach (var el in elements)
+            {
+                string style = el.GetAttributeValue("style", "");
+                string bg = ExtractStyleValue(style, "background-color");
+
+                if (string.IsNullOrEmpty(bg)) continue;
+
+                string bgColor = NormalizeColorForAttribute(bg);
+                if (string.IsNullOrEmpty(bgColor)) continue;
+
+                el.SetAttributeValue("bgcolor", bgColor);
+            }
+
+            return doc.DocumentNode.OuterHtml;
+        }
+
+        private static string NormalizeColorForAttribute(string cssColor)
+        {
+            cssColor = cssColor.Trim();
+
+            if (Regex.IsMatch(cssColor, @"^#[0-9a-fA-F]{3,6}$"))
+                return cssColor;
+
+            var rgbMatch = Regex.Match(cssColor, @"rgb\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*\)");
+            if (rgbMatch.Success)
+            {
+                int r = int.Parse(rgbMatch.Groups[1].Value);
+                int g = int.Parse(rgbMatch.Groups[2].Value);
+                int b = int.Parse(rgbMatch.Groups[3].Value);
+                return $"#{r:X2}{g:X2}{b:X2}";
+            }
+
+            if (Regex.IsMatch(cssColor, @"^[a-zA-Z]+$"))
+                return cssColor;
+
+            return null;
+        }
+
+        private static string FixImageSizingForWord(string customHtml)
+        {
+            var doc = new HtmlAgilityPack.HtmlDocument();
+            doc.LoadHtml(customHtml);
+
+            var images = doc.DocumentNode.SelectNodes("//img");
+            if (images == null) return customHtml;
+
+            foreach (var img in images)
+            {
+                string style = img.GetAttributeValue("style", "");
+                string widthStyle = ExtractStyleValue(style, "width");
+
+                if (string.IsNullOrEmpty(widthStyle)) continue;
+
+                var pxMatch = Regex.Match(widthStyle, @"(\d+(\.\d+)?)px");
+                if (!pxMatch.Success) continue;
+
+                int targetWidth = (int)Math.Round(double.Parse(pxMatch.Groups[1].Value));
+
+                if (img.Attributes.Contains("width") && img.Attributes.Contains("height")) continue;
+
+                int targetHeight = 0;
+
+                string src = img.GetAttributeValue("src", "");
+                if (src.StartsWith("data:image"))
+                {
+                    try
+                    {
+                        var base64Data = src.Substring(src.IndexOf(",") + 1);
+                        var bytes = Convert.FromBase64String(base64Data);
+                        using (var ms = new MemoryStream(bytes))
+                        using (var image = Image.FromStream(ms))
+                        {
+                            double ratio = (double)image.Height / image.Width;
+                            targetHeight = (int)Math.Round(targetWidth * ratio);
+                        }
+                    }
+                    catch
+                    {
+                        targetHeight = 0;
+                    }
+                }
+
+                img.SetAttributeValue("width", targetWidth.ToString());
+                if (targetHeight > 0)
+                    img.SetAttributeValue("height", targetHeight.ToString());
+
+                string cleanedStyle = Regex.Replace(style, @"width\s*:\s*[^;]+;?", "", RegexOptions.IgnoreCase);
+                img.SetAttributeValue("style", cleanedStyle.Trim());
+            }
+
+            return doc.DocumentNode.OuterHtml;
+        }
+
+        // =========================================================================
+        // SHARED HELPERS
+        // =========================================================================
+
+        private static int GetDepth(HtmlNode node)
+        {
+            int depth = 0;
+            while (node.ParentNode != null) { depth++; node = node.ParentNode; }
+            return depth;
+        }
+
+        private static string ExtractStyleValue(string styleAttr, string property)
+        {
+            if (string.IsNullOrEmpty(styleAttr)) return null;
+
+            var match = Regex.Match(
+                styleAttr,
+                $@"(?<![\w-]){Regex.Escape(property)}(?![\w-])\s*:\s*([^;]+)",
+                RegexOptions.IgnoreCase);
+
+            return match.Success ? match.Groups[1].Value.Trim() : null;
+        }
+        static void AddImageToBody(WordprocessingDocument wordDoc, string relationshipId, long cx, long cy)
+        {
+            // Define the reference of the image.
+            var element =
+                 new  Drawing(
+                     new DW.Inline(
+                         new DW.Extent() { Cx = cx, Cy = cy },
+                         new DW.EffectExtent()
+                         {
+                             LeftEdge = 0L,
+                             TopEdge = 0L,
+                             RightEdge = 0L,
+                             BottomEdge = 0L
+                         },
+                         new DW.DocProperties()
+                         {
+                             Id = (UInt32Value)1U,
+                             Name = "Chart Image"
+                         },
+                         new DW.NonVisualGraphicFrameDrawingProperties(
+                             new A.GraphicFrameLocks() { NoChangeAspect = true }),
+                         new A.Graphic(
+                             new A.GraphicData(
+                                 new PIC.Picture(
+                                     new PIC.NonVisualPictureProperties(
+                                         new PIC.NonVisualDrawingProperties()
+                                         {
+                                             Id = (UInt32Value)0U,
+                                             Name = "New Bitmap Chart Image.jpg"
+                                         },
+                                         new PIC.NonVisualPictureDrawingProperties()),
+                                     new PIC.BlipFill(
+                                         new A.Blip(
+                                             new A.BlipExtensionList(
+                                                 new A.BlipExtension()
+                                                 {
+                                                     Uri =
+                                                        "{28A0092B-C50C-407E-A947-70E740481C1C}"
+                                                 })
+                                         )
+                                         {
+                                             Embed = relationshipId,
+                                             CompressionState =
+                                             A.BlipCompressionValues.Print
+                                         },
+                                         new A.Stretch(
+                                             new A.FillRectangle())),
+                                     new PIC.ShapeProperties(
+                                         new A.Transform2D(
+                                             new A.Offset() { X = 0L, Y = 0L },
+                                             new A.Extents() { Cx = 990000L, Cy = 792000L }),
+                                         new A.PresetGeometry(
+                                             new A.AdjustValueList()
+                                         )
+                                         { Preset = A.ShapeTypeValues.Rectangle }))
+                             )
+                             { Uri = "http://schemas.openxmlformats.org/drawingml/2006/picture" })
+                     )
+                     {
+                         DistanceFromTop = (UInt32Value)0U,
+                         DistanceFromBottom = (UInt32Value)0U,
+                         DistanceFromLeft = (UInt32Value)0U,
+                         DistanceFromRight = (UInt32Value)0U,
+                         EditId = "50D07946"
+                     });
+
+            if (wordDoc.MainDocumentPart is null || wordDoc.MainDocumentPart.Document.Body is null)
+            {
+                throw new ArgumentNullException("MainDocumentPart and/or Body is null.");
+            }
+            Paragraph paragraph = new Paragraph(new Run(element));
+            paragraph.ParagraphProperties = new ParagraphProperties(new Justification() { Val = JustificationValues.Center });
+            wordDoc.MainDocumentPart.Document.Body.AppendChild(paragraph);
+        }
+        /// <summary>
+        /// Printable width in twips for the page the export is about to use, page margins removed.
+        /// </summary>
+        private static int GetPrintableWidthTwips(string pageSize, string pageOrientation)
+        {
+            const int margins = 2880; // 1in each side
+
+            // No page size means the export picks a landscape default further down.
+            if (string.IsNullOrEmpty(pageSize)) return 16838 - margins;
+
+            int width, height;
+            switch (pageSize.ToUpper())
+            {
+                case "A4": width = (int)(210 * 56.7); height = (int)(297 * 56.7); break;
+                case "LEGAL": width = (int)(8.5 * 1440); height = 14 * 1440; break;
+                case "A3": width = (int)(297 * 56.7); height = (int)(420 * 56.7); break;
+                case "TABLOID": width = 11 * 1440; height = 17 * 1440; break;
+                default: width = (int)(8.5 * 1440); height = 11 * 1440; break;
+            }
+
+            var landscape = !string.IsNullOrEmpty(pageOrientation) && pageOrientation.ToUpper() == "LANDSCAPE";
+            return (landscape ? height : width) - margins;
+        }
+
+        /// <summary>
+        /// Scales the grid down proportionally so the table fits the page. Columns are not taken below a
+        /// readable minimum; if even that does not fit, the widest columns give up the remainder.
+        /// </summary>
+        private static void FitColumnWidthsToPage(int[] widths, string pageSize, string pageOrientation)
+        {
+            if (widths == null || widths.Length == 0) return;
+
+            var available = GetPrintableWidthTwips(pageSize, pageOrientation);
+            var total = widths.Sum();
+            if (total <= available) return;
+
+            const int floorWidth = 500;
+            var scale = (double)available / total;
+            for (var i = 0; i < widths.Length; i++)
+                widths[i] = Math.Max((int)Math.Floor(widths[i] * scale), floorWidth);
+
+            // Flooring narrow columns can push the total back over, so trim the widest ones.
+            var over = widths.Sum() - available;
+            while (over > 0)
+            {
+                var widest = Array.IndexOf(widths, widths.Max());
+                if (widths[widest] <= floorWidth) break;
+                var take = Math.Min(over, widths[widest] - floorWidth);
+                widths[widest] -= take;
+                over -= take;
+            }
+        }
+
+        /// <summary>
+        /// Report tables read as loose text in Word without cell borders. Only applied to the report body,
+        /// never to the header or footer, where the layout tables must stay invisible.
+        /// </summary>
+        private static string EnsureTableBordersForWord(string customHtml)
+        {
+            if (string.IsNullOrWhiteSpace(customHtml)) return customHtml;
+
+            var doc = new HtmlAgilityPack.HtmlDocument();
+            doc.LoadHtml(customHtml);
+
+            var tables = doc.DocumentNode.SelectNodes("//table");
+            if (tables == null) return customHtml;
+
+            const string defaultBorder = "1px solid #dee2e6";
+
+            foreach (var table in tables)
+            {
+                var tableStyle = table.GetAttributeValue("style", "");
+                if (tableStyle.IndexOf("border-collapse", StringComparison.OrdinalIgnoreCase) < 0)
+                    tableStyle = (tableStyle + " border-collapse:collapse;").Trim();
+                table.SetAttributeValue("style", tableStyle);
+
+                foreach (var cell in table.Descendants().Where(n => n.Name == "td" || n.Name == "th"))
+                {
+                    var style = cell.GetAttributeValue("style", "");
+                    // Respect a border the stylesheet already supplied, whatever form it took.
+                    if (Regex.IsMatch(style, @"(^|;)\s*border(-(top|right|bottom|left))?\s*:", RegexOptions.IgnoreCase)) continue;
+                    cell.SetAttributeValue("style", $"{style} border:{defaultBorder};".Trim());
+                }
+            }
+
+            return doc.DocumentNode.OuterHtml;
+        }
+
+        /// <summary>
+        /// Word turns each block child of a cell into its own paragraph and adds cell padding on top of the
+        /// css padding, so header rows gain blank lines. Drop the children that render nothing and cap the
+        /// vertical padding, leaving the horizontal padding alone.
+        /// </summary>
+        private static string TightenTableCellsForWord(string customHtml)
+        {
+            if (string.IsNullOrWhiteSpace(customHtml)) return customHtml;
+
+            var doc = new HtmlAgilityPack.HtmlDocument();
+            doc.LoadHtml(customHtml);
+
+            var cells = doc.DocumentNode.SelectNodes("//td | //th");
+            if (cells == null) return customHtml;
+
+            const int maxVerticalPaddingPx = 4;
+
+            foreach (var cell in cells)
+            {
+                // Icon spans and placeholder divs carry no text, but Word still gives them a line.
+                foreach (var child in cell.Descendants().Where(n => n.NodeType == HtmlNodeType.Element).ToList())
+                {
+                    if (child.Name == "img" || child.Name == "br") continue;
+                    if (child.Descendants("img").Any()) continue;
+                    if (!string.IsNullOrWhiteSpace(HtmlAgilityPack.HtmlEntity.DeEntitize(child.InnerText))) continue;
+                    child.Remove();
+                }
+
+                var style = cell.GetAttributeValue("style", "");
+                if (string.IsNullOrEmpty(style)) continue;
+
+                var padding = ExtractStyleValue(style, "padding");
+                if (string.IsNullOrEmpty(padding)) continue;
+
+                var parts = padding.Trim().Split(new[] { ' ' }, StringSplitOptions.RemoveEmptyEntries);
+                var vertical = parts[0];
+                var horizontal = parts.Length > 1 ? parts[1] : parts[0];
+
+                if (ToPixels(vertical) <= maxVerticalPaddingPx) continue;
+
+                var tightened = Regex.Replace(style, @"padding\s*:[^;]+;?", "", RegexOptions.IgnoreCase).Trim();
+                cell.SetAttributeValue("style", $"{tightened} padding:{maxVerticalPaddingPx}px {horizontal};".Trim());
+            }
+
+            return doc.DocumentNode.OuterHtml;
+        }
+
+        private static double ToPixels(string value)
+        {
+            if (string.IsNullOrWhiteSpace(value)) return 0;
+            var m = Regex.Match(value.Trim(), @"^(-?\d+(\.\d+)?)\s*(px|pt|mm|cm|in)?$", RegexOptions.IgnoreCase);
+            if (!m.Success) return 0;
+            var n = double.Parse(m.Groups[1].Value, System.Globalization.CultureInfo.InvariantCulture);
+            switch ((m.Groups[3].Value ?? "").ToLowerInvariant())
+            {
+                case "pt": return n * 96.0 / 72.0;
+                case "mm": return n * 96.0 / 25.4;
+                case "cm": return n * 96.0 / 2.54;
+                case "in": return n * 96.0;
+                default: return n;
+            }
+        }
+
+        private static void ApplyCellWidths(TableRow row, int[] widths)
+        {
+            var i = 0;
+            foreach (var cell in row.Elements<TableCell>())
+            {
+                if (i >= widths.Length) break;
+                var tcPr = cell.GetFirstChild<TableCellProperties>();
+                if (tcPr == null) { tcPr = new TableCellProperties(); cell.InsertAt(tcPr, 0); }
+                tcPr.Append(new TableCellWidth() { Width = widths[i].ToString(), Type = TableWidthUnitValues.Dxa });
+                i++;
+            }
+        }
+
+        static private int EstimateTextWidth(string text)
+        {
+            // Simple estimation: number of characters * average width of a character in twips
+            // Note: 1 inch = 1440 twips, and average character width can vary. Adjust this multiplier as needed.
+            int averageCharWidthInTwips = 120;
+            return text.Length * averageCharWidthInTwips;
+        }
+
+        private static async Task SafeDisposeBrowserAsync(IBrowser browser, IPage page)
+        {
+            if (page != null)
+            {
+                try { await page.DisposeAsync(); }
+                catch (Exception ex) { Console.Error.WriteLine($"[Puppeteer] page dispose failed: {ex.Message}"); }
+            }
+            if (browser != null)
+            {
+                try { await browser.DisposeAsync(); }
+                catch (Exception ex) { Console.Error.WriteLine($"[Puppeteer] browser dispose failed: {ex.Message}"); }
+            }
+        }
+
+        private async static Task<LaunchOptions> GetBrowserLaunchOptions(bool debug)
+        {
+            var executablePath = DotNetReportHelper.StaticConfig?.GetValue<string>("dotNetReport:chromiumPath");
+
+            if (string.IsNullOrWhiteSpace(executablePath) || !File.Exists(executablePath))
+            {
+                var installPath = Path.Combine(AppContext.BaseDirectory, "App_Data", "local-chromium");
+                var fetcher = new BrowserFetcher(new BrowserFetcherOptions { Path = installPath });
+                var installed = await fetcher.DownloadAsync();
+                executablePath = installed.GetExecutablePath();
+            }
+
+            var options = new LaunchOptions { Headless = !debug, ExecutablePath = executablePath };
+
+            var extraArgs = DotNetReportHelper.StaticConfig?.GetValue<string>("dotNetReport:chromiumArgs");
+            if (!string.IsNullOrWhiteSpace(extraArgs))
+            {
+                options.Args = extraArgs.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+            }
+
+            return options;
+        }
+
+        private async static Task<(IBrowser browser, IPage page)> LaunchAndLoadReportPrintPageAsync(
+            string printUrl, int reportId, string reportSql, string connectKey,
+            string userId, string clientId, string currentUserRole, string dataFilters,
+            bool expandAll, string expandSqls, string pivotColumn, string pivotFunction,
+            bool subTotalMode, bool includeColumnTotal, bool isSubreport,
+            int pageNumber, int currentPageSize, bool debug, bool canUseAdminMode = false)
+        {
+            var browser = await Puppeteer.LaunchAsync(await GetBrowserLaunchOptions(debug));
+            IPage page = null;
+            try
+            {
+                page = await browser.NewPageAsync();
+                await page.SetRequestInterceptionAsync(true);
+
+                // Build the report data model so the print page can render without re-querying.
+                var connectionString = DotNetReportHelper.GetConnectionString(connectKey);
+                IDatabaseConnection databaseConnection = DatabaseConnectionFactory.GetConnection(dbtype);
+                var data = await GetDataTable(reportSql, connectKey);
+                var qry = data.qry;
+                var sqlFields = data.sqlFields;
+                var dt = data.dt;
+
+                if (!string.IsNullOrEmpty(pivotColumn))
+                {
+                    if (!useAltPivot)
+                    {
+                        var pd = await DotNetReportHelper.GetPivotTable(databaseConnection, connectionString, dt, qry.sql, sqlFields, expandSqls, pivotColumn, pivotFunction, 1, int.MaxValue, null, false, false, subTotalMode, includeColumnTotal, parameters: qry.parameters);
+                        dt = pd.dt;
+                        if (!string.IsNullOrEmpty(pd.sql)) qry.sql = pd.sql;
+                    }
+                    else
+                    {
+                        var ds = await DotNetReportHelper.GetDrillDownData(databaseConnection, connectionString, dt, sqlFields, expandSqls, qry.parameters);
+                        dt = DotNetReportHelper.PushDatasetIntoDataTable(dt, ds, pivotColumn, pivotFunction, expandSqls);
+                    }
+                    var keywordsToExclude = new[] { "Count", "Sum", "Max", "Avg" };
+                    sqlFields = sqlFields
+                        .Where(field => !keywordsToExclude.Any(keyword => field.Contains(keyword)))
+                        .ToList();
+                    sqlFields.AddRange(dt.Columns.Cast<DataColumn>().Skip(sqlFields.Count).Select(x => $"__ AS {x.ColumnName}").ToList());
+                }
+
+                if (isSubreport)
+                {
+                    int skip = (pageNumber - 1) * currentPageSize;
+                    var pagedRows = dt.AsEnumerable().Skip(skip).Take(currentPageSize);
+                    dt = pagedRows.Any() ? pagedRows.CopyToDataTable() : dt.Clone();
+                }
+
+                var model = new DotNetReportResultModel
+                {
+                    ReportData = DotNetReportHelper.DataTableToDotNetReportDataModel(dt, sqlFields, false),
+                    Warnings = "",
+                    ReportSql = qry.sql,
+                    ReportDebug = false,
+                    Pager = new DotNetReportPagerModel
+                    {
+                        CurrentPage = pageNumber,
+                        PageSize = 100000,
+                        TotalRecords = isSubreport ? currentPageSize : dt.Rows.Count,
+                        TotalPages = 1
+                    }
+                };
+
+                // Identity and the report query use trusted server-side session here
+                var exportSession = new ExportSession
+                {
+                    ReportId = reportId,
+                    ReportSql = reportSql,
+                    ConnectKey = connectKey,
+                    Settings = new DotNetReportSettings
+                    {
+                        UserId = userId,
+                        ClientId = clientId,
+                        CurrentUserRole = (currentUserRole ?? "")
+                            .Split(',', StringSplitOptions.RemoveEmptyEntries)
+                            .ToList(),
+                        DataFilters = string.IsNullOrEmpty(dataFilters)
+                            ? new { }
+                            : System.Text.Json.JsonSerializer.Deserialize<object>(dataFilters) ?? new { },
+                        CanUseAdminMode = canUseAdminMode
+                    }
+                };
+                var exportId = ExportSessionStore.Save(exportSession);
+
+                var formData = new StringBuilder();
+                formData.AppendLine("<html><body>");
+                formData.AppendLine($"<form action=\"{printUrl}\" method=\"post\">");
+                formData.AppendLine($"<input name=\"exportId\" value=\"{HttpUtility.HtmlEncode(exportId)}\" />");
+                formData.AppendLine($"<input name=\"pageNumber\" value=\"{pageNumber}\" />");
+                formData.AppendLine($"<input name=\"pageSize\" value=\"{(isSubreport ? currentPageSize : 99999)}\" />");
+                formData.AppendLine($"<input name=\"expandAll\" value=\"{expandAll}\" />");
+                formData.AppendLine($"<input name=\"reportData\" value=\"{HttpUtility.HtmlEncode(JsonConvert.SerializeObject(model))}\" />");
+                formData.AppendLine($"</form>");
+                formData.AppendLine("<script type=\"text/javascript\">document.getElementsByTagName('form')[0].submit();</script>");
+                formData.AppendLine("</body></html>");
+
+                var formPosted = false;
+                page.Request += async (sender, e) =>
+                {
+                    if (formPosted)
+                    {
+                        await e.Request.ContinueAsync();
+                        return;
+                    }
+
+                    await e.Request.RespondAsync(new ResponseData
+                    {
+                        Status = System.Net.HttpStatusCode.OK,
+                        Body = formData.ToString()
+                    });
+
+                    formPosted = true;
+                };
+                page.Console += (sender, e) => Console.WriteLine("[Console Error] " + e.Message);
+                page.PageError += (sender, error) => Console.WriteLine("[Page Error] " + error.Message);
+                page.RequestFailed += (sender, e) => Console.WriteLine($"[Request Failed] {e.Request.Url} - {e.Request.FailureText}");
+
+                await page.GoToAsync(printUrl, new NavigationOptions
+                {
+                    WaitUntil = new[] { WaitUntilNavigation.Networkidle0 }
+                });
+                await page.WaitForSelectorAsync(".report-inner", new WaitForSelectorOptions { Visible = true });
+
+                return (browser, page);
+            }
+            catch
+            {
+                await SafeDisposeBrowserAsync(browser, page);
+                throw;
+            }
+        }
+
+        public async static Task<byte[]> GetPdfFile(string printUrl, int reportId, string reportSql, string connectKey, string reportName,
+                      string userId = null, string clientId = null, string currentUserRole = null, string dataFilters = "", bool expandAll = false, string expandSqls = null,
+                      string pivotColumn = null, string pivotFunction = null, bool imageOnly = false, bool debug = false,string pageSize="",string pageOrientation="",bool subTotalMode=false,bool includeColumnTotal=false, bool isSubreport = false,
+        int pageNumber = 1,
+        int currentPageSize = 1, bool canUseAdminMode = false)
+        {
+            IBrowser browser = null;
+            IPage page = null;
+            string pdfFile = null;
+            try
+            {
+                (browser, page) = await LaunchAndLoadReportPrintPageAsync(
+                    printUrl, reportId, reportSql, connectKey,
+                    userId, clientId, currentUserRole, dataFilters,
+                    expandAll, expandSqls, pivotColumn, pivotFunction,
+                    subTotalMode, includeColumnTotal, isSubreport,
+                    pageNumber, currentPageSize, debug, canUseAdminMode);
+
+                if (imageOnly)
+                {
+                    try
+                    {
+                        var imageData = await page.EvaluateExpressionAsync<string>("window.chartImageUrl");
+                        await page.EvaluateExpressionAsync("delete window.chartImageUrl;");
+
+                        if (!string.IsNullOrEmpty(imageData))
+                        {
+                            string base64String = imageData.Split(',')[1];
+
+                            return Convert.FromBase64String(base64String);
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        return new byte[0];
+                    }
+
+                    return new byte[0];
+                }
+
+                int height = await page.EvaluateExpressionAsync<int>("document.body.offsetHeight");
+                int width = Convert.ToInt32(await page.EvaluateExpressionAsync<decimal>("$('table').width()"));
+                pdfFile = Path.Combine(AppContext.BaseDirectory, $"App_Data\\{reportName}.pdf");
+
+                // Read header/footer "include on every page" settings from the loaded print page
+                bool headerEveryPage = false;
+                bool footerEveryPage = false;
+                string everyPageHeaderHtml = "";
+                string everyPageFooterHtml = "";
+                try
+                {
+                    headerEveryPage = await page.EvaluateExpressionAsync<bool>("window.reportHeaderIncludeOnEveryPage === true");
+                    footerEveryPage = await page.EvaluateExpressionAsync<bool>("window.reportFooterIncludeOnEveryPage === true");
+                    if (headerEveryPage)
+                        everyPageHeaderHtml = await page.EvaluateExpressionAsync<string>("window.reportHeaderHtml || ''") ?? "";
+                    if (footerEveryPage)
+                        everyPageFooterHtml = await page.EvaluateExpressionAsync<string>("window.reportFooterHtml || ''") ?? "";
+                }
+                catch { }
+
+                string pageStyles = "";
+                try
+                {
+                    pageStyles = await page.EvaluateExpressionAsync<string>(@"
+                        Array.from(document.styleSheets)
+                            .map(function(s) {
+                                try { return Array.from(s.cssRules).map(function(r) { return r.cssText; }).join('\n'); }
+                                catch(e) { return ''; }
+                            })
+                            .join('\n')
+                    ") ?? "";
+                }
+                catch { }
+
+                string PreparePuppeteerTemplate(string html)
+                {
+                    if (string.IsNullOrEmpty(html)) return "";
+                    html = html.Replace("{page.number}", "<span class=\"pageNumber\"></span>")
+                               .Replace("{page.total}", "<span class=\"totalPages\"></span>");
+                    // Rebuild the ancestor chain the html had in the document, otherwise rules scoped
+                    // under .report-view cannot match inside the isolated header/footer template.
+                    return "<style>" + pageStyles + " * { -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; }</style>"
+                         + "<div class=\"report-view\" style=\"font-size:10px; width:100%; padding: 0 0.4in; -webkit-print-color-adjust: exact; print-color-adjust: exact;\">" + html + "</div>";
+                }
+
+                if (headerEveryPage || footerEveryPage)
+                {
+                    // Hide in-document header/footer to avoid double rendering
+                    try
+                    {
+                        if (headerEveryPage) await page.AddStyleTagAsync(new AddTagOptions { Content = "#report-header { display: none !important; }" });
+                        if (footerEveryPage) await page.AddStyleTagAsync(new AddTagOptions { Content = "#report-footer { display: none !important; }" });
+                    }
+                    catch { }
+                }
+
+                string headerTemplate = headerEveryPage ? PreparePuppeteerTemplate(everyPageHeaderHtml) : "<span></span>";
+                string footerTemplate = footerEveryPage ? PreparePuppeteerTemplate(everyPageFooterHtml) : "<span></span>";
+                double headerHeightIn = 0;
+                double footerHeightIn = 0;
+                try
+                {
+                    if (headerEveryPage)
+                        headerHeightIn = await page.EvaluateExpressionAsync<double>("window.reportHeaderHeightIn || 0");
+                    if (footerEveryPage)
+                        footerHeightIn = await page.EvaluateExpressionAsync<double>("window.reportFooterHeightIn || 0");
+                }
+                catch { }
+
+                double topMarginIn = headerEveryPage ? Math.Max(1.0, headerHeightIn + 0.3) : 0.75;
+                double bottomMarginIn = footerEveryPage ? Math.Max(1.0, footerHeightIn + 0.3) : 0.75;
+
+                var pdfOptions = new PdfOptions
+                {
+                    PrintBackground = true,
+                    PreferCSSPageSize = false,
+                    MarginOptions = new MarginOptions()
+                    {
+                        Top = topMarginIn.ToString("0.00", System.Globalization.CultureInfo.InvariantCulture) + "in",
+                        Bottom = bottomMarginIn.ToString("0.00", System.Globalization.CultureInfo.InvariantCulture) + "in",
+                        Left = "0.1in",
+                        Right = "0.1in"
+                    },
+                    DisplayHeaderFooter = headerEveryPage || footerEveryPage,
+                    HeaderTemplate = headerTemplate,
+                    FooterTemplate = footerTemplate
+                };
+                if (!String.IsNullOrEmpty(pageOrientation))
+                {
+                    var Oreintation = (pageOrientation ?? "PORTRAIT").ToUpperInvariant();
+                    switch (Oreintation)
+                    {
+                        case "LANDSCAPE":
+                            pdfOptions.Landscape = true;
+                            break;
+                        case "PORTRAIT":
+                        default:
+                            pdfOptions.Landscape = false;
+                            break;
+                    }
+                }
+                if (!String.IsNullOrEmpty(pageSize))
+                {
+                    var normalizedPageSize = (pageSize ?? "Letter").ToUpperInvariant();
+                    PaperFormat selectedFormat = PaperFormat.A4;
+                    switch (normalizedPageSize)
+                    {
+                        case "A4":
+                            selectedFormat = PaperFormat.A4;
+                            break;
+                        case "LEGAL":
+                            selectedFormat = PaperFormat.Legal;
+                            break;
+                        case "A1":
+                            selectedFormat = PaperFormat.A1;
+                            break;
+                        case "A2":
+                            selectedFormat = PaperFormat.A2;
+                            break;
+                        case "A3":
+                            selectedFormat = PaperFormat.A3;
+                            break;
+                        case "TABLOID":
+                            selectedFormat = PaperFormat.Tabloid;
+                            break;
+                        case "LETTER":
+                        default:
+                            selectedFormat = PaperFormat.Letter;
+                            break;
+                    }
+                    pdfOptions.Format = selectedFormat;
+
+                    // Auto-scale to fit wide tables within the selected page width
+                    bool isLandscape = pdfOptions.Landscape == true;
+                    double pageWidthInches = GetPaperFormatWidthInches(normalizedPageSize, isLandscape);
+                    double usableWidthPx = (pageWidthInches - 0.2) * 96.0 - 100; // subtract margins (0.1in each side at 96 DPI) plus 100px buffer to prevent right-side clipping
+                    if (width > usableWidthPx && usableWidthPx > 0)
+                    {
+                        double scale = usableWidthPx / width;
+                        pdfOptions.Scale = (decimal) Math.Max(0.1, scale);
+                    }
+                }
+                else
+                {
+                    if (width < 900)
+                    {
+                        pdfOptions.Format = PaperFormat.Letter;
+                        pdfOptions.Landscape = false;
+                    }
+                    else
+                    {
+                        await page.SetViewportAsync(new ViewPortOptions { Width = width });
+                        await page.AddStyleTagAsync(new AddTagOptions { Content = "@page {size: landscape }" });
+                        pdfOptions.Width = $"{width+100}px";
+                        pdfOptions.MarginOptions.Right = "0.5in";
+                    }
+                }
+                await page.EmulateMediaTypeAsync(MediaType.Screen);
+                await page.EvaluateExpressionAsync("$('.report-inner').css('transform','none')");
+                await page.PdfAsync(pdfFile, pdfOptions);
+                await page.DisposeAsync();
+                await browser.DisposeAsync();
+                return File.ReadAllBytes(pdfFile);
+            }
+            catch (Exception)
+            {
+                throw;
+            }
+            finally
+            {
+                await SafeDisposeBrowserAsync(browser, page);
+                if (pdfFile != null)
+                {
+                    try { if (File.Exists(pdfFile)) File.Delete(pdfFile); } catch { /* best-effort */ }
+                }
+            }
+        }
+
+        public async static Task<string> GetReportRenderedHtml(string printUrl, int reportId, string reportSql, string connectKey, string reportName,
+            string userId = null, string clientId = null, string currentUserRole = null, string dataFilters = "", bool expandAll = false, string expandSqls = null,
+            string pivotColumn = null, string pivotFunction = null, bool canUseAdminMode = false)
+        {
+            IBrowser browser = null;
+            IPage page = null;
+            try
+            {
+                (browser, page) = await LaunchAndLoadReportPrintPageAsync(
+                    printUrl, reportId, reportSql, connectKey,
+                    userId, clientId, currentUserRole, dataFilters,
+                    expandAll, expandSqls, pivotColumn, pivotFunction,
+                    subTotalMode: false, includeColumnTotal: false, isSubreport: false,
+                    pageNumber: 1, currentPageSize: 99999, debug: false, canUseAdminMode: canUseAdminMode);
+
+                await Task.Delay(750);
+
+                var html = await page.EvaluateExpressionAsync<string>(@"
+                    (function () {
+                        var $area = $('.report-inner .report-expanded-scroll').first();
+                        if (!$area.length) $area = $('.report-inner').first();
+                        if (!$area.length) return '';
+                        var $clone = $area.clone();
+                        $clone.find('.report-spinner').remove();
+                        $clone.find('a[title=""Edit sub report""]').remove();
+                        $clone.find('script').remove();
+                        return $clone.html() || '';
+                    })();
+                ");
+
+                return html ?? "";
+            }
+            catch (Exception)
+            {
+                return "";
+            }
+            finally
+            {
+                await SafeDisposeBrowserAsync(browser, page);
+            }
+        }
+
+        private static double GetPaperFormatWidthInches(string format, bool landscape)
+        {
+            double w, h;
+            switch (format)
+            {
+                case "LETTER":  w = 8.5;   h = 11.0;  break;
+                case "LEGAL":   w = 8.5;   h = 14.0;  break;
+                case "TABLOID": w = 11.0;  h = 17.0;  break;
+                case "A1":      w = 23.39; h = 33.11; break;
+                case "A2":      w = 16.54; h = 23.39; break;
+                case "A3":      w = 11.69; h = 16.54; break;
+                case "A4":
+                default:        w = 8.27;  h = 11.69; break;
+            }
+
+            return landscape ? h : w;
+        }
+
+        public static byte[] GetCombinePdfFile(List<byte[]> pdfFiles)
+        {
+            using (var outputDocument = new PdfDocument())
+            {
+                foreach (var pdf in pdfFiles)
+                {
+                    using (var inputDocument = PdfReader.Open(new MemoryStream(pdf), PdfDocumentOpenMode.Import))
+                    {
+                        for (int i = 0; i < inputDocument.PageCount; i++)
+                        {
+                            outputDocument.AddPage(inputDocument.Pages[i]);
+                        }
+                    }
+                }
+                using (var ms = new MemoryStream())
+                {
+                    outputDocument.Save(ms);
+                    return ms.ToArray();
+                }
+            }
+        }
+        public static byte[] GetCombineExcelFile(List<byte[]> excelFiles, List<string> sheetNames)
+        {
+            using (var package = new ExcelPackage())
+            {
+                for (int i = 0; i < excelFiles.Count; i++)
+                {
+                    var fileBytes = excelFiles[i];
+                    var sheetName = sheetNames[i] ?? $"Sheet{i + 1}";
+
+                    using (var stream = new MemoryStream(fileBytes))
+                    using (var tempPackage = new ExcelPackage(stream))
+                    {
+                        var tempSheet = tempPackage.Workbook.Worksheets[0];
+                        var newSheet = package.Workbook.Worksheets.Add(sheetName, tempSheet);
+                    }
+                }
+
+                return package.GetAsByteArray();
+            }
+        }
+        public static byte[] GetCombineWordFile(List<byte[]> wordFiles)
+        {
+            using (MemoryStream memStream = new MemoryStream())
+            {
+                using (WordprocessingDocument wordDocument = WordprocessingDocument.Create(memStream, WordprocessingDocumentType.Document))
+                {
+                    MainDocumentPart mainPart = wordDocument.AddMainDocumentPart();
+                    mainPart.Document = new Document(new Body());
+                    for (int i = 0; i < wordFiles.Count; i++)
+                    {
+                        byte[] wordFile = wordFiles[i];
+                        using (MemoryStream tempStream = new MemoryStream(wordFile))
+                        using (WordprocessingDocument tempDoc = WordprocessingDocument.Open(tempStream, false))
+                        {
+                            // Copy each image part to the main document
+                            foreach (var imagePart in tempDoc.MainDocumentPart.ImageParts)
+                            {
+                                var newImagePart = mainPart.AddImagePart(imagePart.ContentType);
+                                newImagePart.FeedData(imagePart.GetStream());
+                                string newRelId = mainPart.GetIdOfPart(newImagePart);
+                                // Update references in the body to the new image part ID
+                                foreach (var drawing in tempDoc.MainDocumentPart.Document.Body.Descendants<Drawing>())
+                                {
+                                    var blip = drawing.Descendants<A.Blip>().FirstOrDefault();
+                                    if (blip != null && blip.Embed.HasValue)
+                                    {
+                                        blip.Embed = newRelId;
+                                    }
+                                }
+                            }
+                            // Copy the document body elements
+                            Body tempBody = tempDoc.MainDocumentPart.Document.Body.CloneNode(true) as Body;
+                            foreach (var element in tempBody.Elements())
+                            {
+                                mainPart.Document.Body.AppendChild(element.CloneNode(true));
+                            }
+                            if (i < wordFiles.Count - 1)
+                            {
+                                mainPart.Document.Body.AppendChild(new Paragraph(new Run(new Break() { Type = BreakValues.Page })));
+                            }
+                        }
+                    }
+                    mainPart.Document.Save();
+                }
+                return memStream.ToArray();
+            }
+        }
+
+        public static async Task<string> GetXmlFile(string reportSql, string connectKey, string reportName, string expandSqls = null, string pivotColumn = null, string pivotFunction = null)
+        {           
+            var ds = new DataSet();
+            var data = await GetDataTable(reportSql, connectKey);
+            var dt = data.dt;
+            RemoveColumnsBySubstring(dt, "__prm__");
+            var connectionString = DotNetReportHelper.GetConnectionString(connectKey);
+            IDatabaseConnection databaseConnection = DatabaseConnectionFactory.GetConnection(dbtype);
+            var qry = data.qry;
+            var sqlFields = data.sqlFields;            
+
+            if (!string.IsNullOrEmpty(pivotColumn))
+            {
+                if (!useAltPivot)
+                {
+                    var pd = await DotNetReportHelper.GetPivotTable(databaseConnection, connectionString, dt, qry.sql, sqlFields, expandSqls, pivotColumn, pivotFunction, 1, int.MaxValue, null, false, parameters: qry.parameters);
+                    dt = pd.dt;
+                    if (!string.IsNullOrEmpty(pd.sql)) qry.sql = pd.sql;
+                }
+                else
+                {
+                    var dds = await DotNetReportHelper.GetDrillDownData(databaseConnection, connectionString, dt, sqlFields, expandSqls, qry.parameters);
+                    dt = DotNetReportHelper.PushDatasetIntoDataTable(dt, dds, pivotColumn, pivotFunction, expandSqls);
+                }
+            }
+
+            ds.Tables.Add(dt);
+            ds.DataSetName = "data";
+            foreach (DataColumn c in dt.Columns)
+            {
+                c.ColumnName = c.ColumnName.Replace(" ", "_").Replace("(", "").Replace(")", "");
+            }
+            dt.TableName = "item";
+            var xml = ds.GetXml();
+            return xml;
+        }
+
+        public static string TryDecrypt(string sql)
+        {
+            try
+            {
+                return DotNetReportHelper.Decrypt(sql);
+            }
+            catch (Exception ex)
+            {
+                return sql;
+            }
+        }
+
+        /// <summary>
+        /// Method to Deycrypt encrypted sql statement. PLESE DO NOT CHANGE THIS METHOD
+        /// </summary>
+        public static string Decrypt(string encryptedText)
+        {
+            encryptedText = encryptedText.Split(new string[] { "%2C", "," }, StringSplitOptions.RemoveEmptyEntries)[0];
+            byte[] initVectorBytes = Encoding.ASCII.GetBytes("yk0z8f39lgpu70gi"); // PLESE DO NOT CHANGE THIS KEY
+            int keysize = 256;
+
+            byte[] cipherTextBytes = Convert.FromBase64String(encryptedText.Replace("%3D", "="));
+            var passPhrase = StaticConfig.GetValue<string>("dotNetReport:privateApiToken").ToLower();
+            using (PasswordDeriveBytes password = new PasswordDeriveBytes(passPhrase, null))
+            {
+                byte[] keyBytes = password.GetBytes(keysize / 8);
+                using (RijndaelManaged symmetricKey = new RijndaelManaged())
+                {
+                    symmetricKey.Mode = CipherMode.CBC;
+                    using (ICryptoTransform decryptor = symmetricKey.CreateDecryptor(keyBytes, initVectorBytes))
+                    {
+                        using (MemoryStream memoryStream = new MemoryStream(cipherTextBytes))
+                        {
+                            using (CryptoStream cryptoStream = new CryptoStream(memoryStream, decryptor, CryptoStreamMode.Read))
+                            {
+                                byte[] plainTextBytes = new byte[cipherTextBytes.Length];
+                                int decryptedByteCount = cryptoStream.Read(plainTextBytes, 0, plainTextBytes.Length);
+                                var decryptedString = Encoding.UTF8.GetString(plainTextBytes, 0, decryptedByteCount);
+                                while (decryptedByteCount > 0)
+                                {
+                                    decryptedByteCount = cryptoStream.Read(plainTextBytes, 0, plainTextBytes.Length);
+                                    decryptedString += Encoding.UTF8.GetString(plainTextBytes, 0, decryptedByteCount);
+                                }
+
+                                return decryptedString;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        public static async Task<byte[]> GetCSVFile(string reportSql, string connectKey, List<ReportHeaderColumn> columns = null, bool includeSubtotal = false, string expandSqls = null, bool pivot = false, string pivotColumn = null, string pivotFunction = null)
+        {
+            var dt = await BuildExportData(reportSql, connectKey, expandSqls, columns, pivot, pivotColumn, pivotFunction);
+            var subTotals = new decimal[dt.Columns.Count];
+
+            var sb = new StringBuilder(capacity: dt.Rows.Count * dt.Columns.Count * 10); // Estimate initial capacity
+
+            for (int i = 0; i < dt.Columns.Count; i++)
+            {
+                var columnName = !string.IsNullOrEmpty(columns?[i].fieldLabel) ? columns[i].fieldLabel : dt.Columns[i].ColumnName;
+
+                // Prevent formula injection
+                if (!string.IsNullOrEmpty(columnName) && ("=+-@".Contains(columnName[0])))
+                    columnName = "'" + columnName;
+
+                sb.Append('"').Append(columnName.Replace("\"", "\"\"")).Append('"').Append(',');
+            }
+            sb.Length--; // Remove trailing comma
+            sb.AppendLine();
+
+            foreach (DataRow row in dt.Rows)
+            {
+                for (int i = 0; i < dt.Columns.Count; i++)
+                {
+                    var column = dt.Columns[i];
+                    var value = row[column]?.ToString() ?? string.Empty;
+
+                    var formatColumn = GetColumnFormatting(column, columns, ref value);
+
+                    if (includeSubtotal && formatColumn.isNumeric && !(formatColumn?.dontSubTotal ?? false))
+                    {
+                        if (decimal.TryParse(row[column]?.ToString(), out decimal num))
+                            subTotals[i] += num;
+                    }
+
+                    // Prevent formula injection
+                    if (!string.IsNullOrEmpty(value) && ("=+-@".Contains(value[0])))
+                        value = "'" + value;
+
+                    value = value.Replace("\r", " ").Replace("\n", " ").Replace("\"", "\"\"");
+
+                    sb.Append('"').Append(value).Append('"').Append(',');
+                }
+                sb.Length--; // Remove trailing comma
+                sb.AppendLine();
+            }
+
+            if (includeSubtotal)
+            {
+                for (int j = 0; j < dt.Columns.Count; j++)
+                {
+                    var value = subTotals[j].ToString();
+                    var dc = dt.Columns[j];
+                    var formatColumn = GetColumnFormatting(dc, columns, ref value);
+
+                    if (formatColumn.isNumeric && !(formatColumn?.dontSubTotal ?? false))
+                        sb.Append('"').Append(value).Append('"');
+                    else
+                        sb.Append("\"\"");
+
+                    sb.Append(',');
+                }
+                sb.Length--; // Remove trailing comma
+                sb.AppendLine();
+            }
+
+            return Encoding.UTF8.GetBytes(sb.ToString());
+        }
+
+        public static dynamic GetDbConnectionSettings(string account, string dataConnect, bool addOledbProvider = true)
+        {
+            var _configFilePath = Path.Combine(Directory.GetCurrentDirectory(), _configFileName);
+            if (!System.IO.File.Exists(_configFilePath))
+            {
+                var emptyConfig = new JObject();
+                System.IO.File.WriteAllText(_configFilePath, emptyConfig.ToString(Newtonsoft.Json.Formatting.Indented));
+            }
+
+            string configContent = System.IO.File.ReadAllText(_configFilePath);
+
+            var config = JObject.Parse(configContent);
+            var dotNetReportSection = config[$"dotNetReport"] as JObject;
+
+            // First try to get connection from the dotnetreport appsettings file
+            if (dotNetReportSection != null && !string.IsNullOrEmpty(dataConnect))
+            {
+                var dataConnectSection = dotNetReportSection[dataConnect] as JObject;
+                if (dataConnectSection != null)
+                {
+                    return dataConnectSection.ToObject<dynamic>();
+                }
+            }
+            else
+            {
+                // Next try to get config from appsettings (original method)
+                var connection = DotNetReportHelper.GetConnection();
+                var connectionString = DotNetReportHelper.GetConnectionString(connection, addOledbProvider).Result;
+
+                if (!string.IsNullOrEmpty(connectionString))
+                {
+                    var dbConfig = new JObject
+                    {
+                        ["DatabaseType"] = "MS Sql",
+                        ["ConnectionKey"] = "Default",
+                        ["ConnectionString"] = connectionString
+                    };
+                    return dbConfig.ToObject<dynamic>();
+                }
+            }
+
+            return null;
+        }
+
+        public static void UpdateDbConnection(UpdateDbConnectionModel model)
+        {
+            // Use dependency injection to get the appropriate implementation based on the database type
+            var databaseConnection = DatabaseConnectionFactory.GetConnection(model.dbType);
+
+            var connectionString = "";
+            if (model.connectionType == "Build")
+            {
+                connectionString = databaseConnection.CreateConnection(model);
+            }
+            else
+            {
+                connectionString = DotNetReportHelper.GetConnectionString(model.connectionKey, false);
+
+                if (string.IsNullOrEmpty(connectionString))
+                {
+                    throw new Exception($"Connection string with key '{model.connectionKey}' was not found in App Config");
+                }
+            }
+
+            try
+            {
+                // Test the database connection
+                if (!databaseConnection.TestConnection(connectionString))
+                {
+                    throw new Exception("Could not connect to the Database.");
+                }
+            }
+            catch (Exception ex)
+            {
+                throw new Exception($"Could not connect to the Database. Error: {ex.Message}");
+            }
+
+            if (!model.testOnly)
+            {
+                var _configFilePath = Path.Combine(Directory.GetCurrentDirectory(), _configFileName);
+                if (!System.IO.File.Exists(_configFilePath))
+                {
+                    var emptyConfig = new JObject();
+                    System.IO.File.WriteAllText(_configFilePath, emptyConfig.ToString(Newtonsoft.Json.Formatting.Indented));
+                }
+
+                // Get the existing JSON configuration
+                var config = JObject.Parse(System.IO.File.ReadAllText(_configFilePath));
+                if (config["dotNetReport"] == null)
+                {
+                    config["dotNetReport"] = new JObject();
+                }
+
+                // Update the specified properties within the "dotNetReport" and "dataConfig" section
+                var dotNetReportSection = config["dotNetReport"] as JObject;
+                if (dotNetReportSection[model.dataConnect] == null)
+                {
+                    dotNetReportSection[model.dataConnect] = new JObject();
+                }
+
+                var dataConnectSection = dotNetReportSection[model.dataConnect] as JObject;
+
+                dataConnectSection["DatabaseType"] = model.dbType;
+                dataConnectSection["ConnectionType"] = model.connectionType;
+                if (model.connectionType == "Build")
+                {
+                    dataConnectSection["ConnectionKey"] = "Default";
+                    dataConnectSection["ConnectionString"] = connectionString;
+                    dataConnectSection["DatabaseHost"] = model.dbServer;
+                    dataConnectSection["DatabasePort"] = model.dbPort;
+                    dataConnectSection["DatabaseName"] = model.dbName;
+                    dataConnectSection["Username"] = model.dbUsername;
+                    dataConnectSection["Password"] = model.dbPassword;
+                    dataConnectSection["AuthenticationType"] = model.dbAuthType;
+
+                }
+                else if (model.connectionType == "Key")
+                {
+                    dataConnectSection["ConnectionKey"] = model.connectionKey;
+                    dataConnectSection["ConnectionString"] = connectionString;
+                }
+
+                if (model.isDefault)
+                {
+                    dotNetReportSection["DefaultConnection"] = model.dataConnect;
+                }
+
+                // Save the updated JSON back to the file
+                File.WriteAllText(_configFilePath, config.ToString());
+            }
+
+        }
+
+        public static void UpdateUserConfigSetting(UpdateUserConfigModel model)
+        {
+            var _configFilePath = Path.Combine(Directory.GetCurrentDirectory(), _configFileName);
+            if (!System.IO.File.Exists(_configFilePath))
+            {
+                var emptyConfig = new JObject();
+                System.IO.File.WriteAllText(_configFilePath, emptyConfig.ToString(Newtonsoft.Json.Formatting.Indented));
+            }
+
+            // Get the existing JSON configuration
+            var config = JObject.Parse(System.IO.File.ReadAllText(_configFilePath));
+            if (config["dotNetReport"] == null)
+            {
+                config["dotNetReport"] = new JObject();
+            }
+
+            // Update the specified properties within the "dotNetReport" and "dataConfig" section
+            var dotNetReportSection = config["dotNetReport"] as JObject;
+            if (dotNetReportSection[model.dataConnect] == null)
+            {
+                dotNetReportSection[model.dataConnect] = new JObject();
+            }
+
+            var dataConnectSection = dotNetReportSection[model.dataConnect] as JObject;
+            dataConnectSection["UserConfig"] = model.userConfig;
+
+            // Save the updated JSON back to the file
+            System.IO.File.WriteAllText(_configFilePath, config.ToString());
+
+        }
+
+        public static void UpdateConfigurationFile(string accountApiKey, string privateApiKey, string dataConnectKey, bool onlyIfEmpty = false)
+        {
+            var _configFileName = "appsettings.json";
+            var _configFilePath = Path.Combine(Directory.GetCurrentDirectory(), _configFileName);
+
+            JObject existingConfig;
+            if (System.IO.File.Exists(_configFilePath))
+            {
+                existingConfig = JObject.Parse(System.IO.File.ReadAllText(_configFilePath));
+                if (existingConfig["dotNetReport"] is JObject dotNetReportObject)
+                {
+                    if (!onlyIfEmpty || (onlyIfEmpty && dotNetReportObject["accountApiToken"] != null && dotNetReportObject["accountApiToken"].ToString() == "Your Account API Key"))
+                    {
+                        dotNetReportObject["accountApiToken"] = accountApiKey;
+                        dotNetReportObject["dataconnectApiToken"] = dataConnectKey;
+
+                        if (!string.IsNullOrEmpty(privateApiKey))
+                            dotNetReportObject["privateApiToken"] = privateApiKey;
+
+                        System.IO.File.WriteAllText(_configFilePath, existingConfig.ToString(Newtonsoft.Json.Formatting.Indented));
+                    }
+                }
+            }
+        }
+
+        public static AppSettingModel GetAppSettings()
+        {
+            var _configFilePath = Path.Combine(Directory.GetCurrentDirectory(), _configFileName);
+            if (!System.IO.File.Exists(_configFilePath))
+            {
+                var emptyConfig = new JObject();
+                System.IO.File.WriteAllText(_configFilePath, emptyConfig.ToString(Newtonsoft.Json.Formatting.Indented));
+            }
+
+            string configContent = System.IO.File.ReadAllText(_configFilePath);
+
+            var config = JObject.Parse(configContent);
+            // Extract the AppSetting section
+            var appSetting = config["dotNetReport"]?["AppSetting"];
+
+            // Create an instance of ApiSettingModel and populate its properties
+            var settings = new AppSettingModel
+            {
+                emailAddress = appSetting?["email"]?["fromemail"]?.ToString(),
+                emailName = appSetting?["email"]?["fromname"]?.ToString(),
+                emailServer = appSetting?["email"]?["server"]?.ToString(),
+                emailPort = appSetting?["email"]?["port"]?.ToString(),
+                emailUserName = appSetting?["email"]?["username"]?.ToString(),
+                emailPassword = appSetting?["email"]?["password"]?.ToString(),
+                backendApiUrl = appSetting?["BaseApiUrl"]?.ToString() ?? "https://dotnetreport.com/api",
+                timeZone = appSetting?["TimeZone"]?.ToString() ?? "-6",
+                appThemes = appSetting?["AppTheme"]?.ToString() ?? "default"
+            };
+
+            return settings;
+        }
+
+        public static void SaveAppSettings(AppSettingModel model)
+        {
+            var _configFilePath = Path.Combine(Directory.GetCurrentDirectory(), _configFileName);
+            if (!System.IO.File.Exists(_configFilePath))
+            {
+                var emptyConfig = new JObject();
+                System.IO.File.WriteAllText(_configFilePath, emptyConfig.ToString(Newtonsoft.Json.Formatting.Indented));
+            }
+
+            //// Get the existing JSON configuration
+            var config = JObject.Parse(System.IO.File.ReadAllText(_configFilePath));
+            if (config["dotNetReport"] == null)
+            {
+                config["dotNetReport"] = new JObject();
+            }
+            var appsetting = config["dotNetReport"]["AppSetting"] ?? new JObject();
+            appsetting["email"] = new JObject
+            {
+                ["fromemail"] = model.emailAddress,
+                ["fromname"] = model.emailName,
+                ["server"] = model.emailServer,
+                ["port"] = model.emailPort,
+                ["username"] = model.emailUserName,
+                ["password"] = model.emailPassword
+            };
+
+            appsetting["BaseApiUrl"] = model.backendApiUrl;
+            appsetting["TimeZone"] = model.timeZone;
+            appsetting["AppTheme"] = model.appThemes;
+
+            config["dotNetReport"]["AppSetting"] = appsetting;
+
+            // Save the updated JSON back to the file
+            System.IO.File.WriteAllText(_configFilePath, config.ToString());
+
+        }
+
+    }
+
+    public class UpdateUserConfigModel
+    {
+        public string account { get; set; }
+        public string dataConnect { get; set; }
+        public string userConfig { get; set; }
+    }
+
+    public class UpdateDbConnectionModel
+    {
+        public string account { get; set; } = "";
+        public string dataConnect { get; set; } = "";
+        public string dbType { get; set; } = "";
+        public string connectionType { get; set; } = "";
+        public string connectionKey { get; set; } = "";
+        public string connectionString { get; set; } = "";
+        public string dbServer { get; set; } = "";
+        public string dbPort { get; set; } = "";
+        public string dbName { get; set; } = "";
+        public string dbAuthType { get; set; } = "";
+        public string dbUsername { get; set; } = "";
+        public string dbPassword { get; set; } = "";
+        public string providerName { get; set; } = "";
+        public bool isDefault { get; set; }
+        public bool testOnly { get; set; }
+    }
+
+    public class AppSettingModel
+    {
+        public string account { get; set; } = "";
+        public string dataConnect { get; set; } = "";
+        public string emailUserName { get; set; } = "";
+        public string emailPassword { get; set; } = "";
+        public string emailServer { get; set; } = "";
+        public string emailPort { get; set; } = "";
+        public string emailName { get; set; } = "";
+        public string emailAddress { get; set; } = "";
+        public string backendApiUrl { get; set; } = "";
+        public string timeZone { get; set; } = "";
+        public string appThemes { get; set; } = "";
+    }
+
+    public static class DatabaseConnectionFactory
+    {
+        public static IDatabaseConnection GetConnection(string dbtype = "")
+        {
+            IDatabaseConnection databaseConnection = new SqlServerDatabaseConnection();
+            switch (dbtype.ToLower())
+            {
+                case "ms sql":
+                    databaseConnection = new SqlServerDatabaseConnection();
+                    break;
+                case "mysql":
+                    //databaseConnection = new MySqlDatabaseConnection();
+                    break;
+                case "postgresql":
+                    //databaseConnection = new PostgresDatabaseConnection();
+                    break;
+                case "oracle":
+                    //databaseConnection = new OracleDatabaseConnection();
+                    break;
+                case "informix":
+                    //databaseConnection = new InformixDatabaseConnection();
+                    break;
+                default:
+                    //databaseConnection = new OleDbDatabaseConnection();
+                    break;
+            }
+
+            return databaseConnection;
+        }
+
+
+    }
+    public interface IDatabaseConnection
+    {
+        bool TestConnection(string connectionString);
+        string CreateConnection(UpdateDbConnectionModel model);
+        int GetTotalRecords(string connectionString, string sqlCount, string sql, List<KeyValuePair<string, string>> parameters = null);
+        DataTable ExecuteQuery(string connectionString, string sql, List<KeyValuePair<string, string>> parameters = null);
+        DataSet ExecuteDataSetQuery(string connectionString, string combinedSqls, List<KeyValuePair<string, string>> parameters = null);
+        Task<List<TableViewModel>> GetTables(string type = "TABLE", string? accountKey = null, string? dataConnectKey = null);
+        Task<TableViewModel> GetSchemaFromSql(string connString, TableViewModel table, string sql, bool dynamicColumns);
+        Task<List<TableViewModel>> GetSearchProcedure(string value = null, string accountKey = null, string dataConnectKey = null);
+
+    }
+
+    public class SqlServerDatabaseConnection : IDatabaseConnection
+    {
+        public bool TestConnection(string connectionString)
+        {
+            using (SqlConnection conn = new SqlConnection(connectionString))
+            {
+                try
+                {
+                    //Test Connection
+                    conn.Open();
+                    conn.Close();
+                    return true;
+                }
+                catch (Exception ex)
+                {
+                    throw ex;
+                }
+            }
+        }
+
+        public string CreateConnection(UpdateDbConnectionModel model)
+        {
+            SqlConnectionStringBuilder sqlConnectionStringBuilder = new SqlConnectionStringBuilder();
+
+            // Set other SQL connection properties
+            sqlConnectionStringBuilder.DataSource = model.dbServer;
+            sqlConnectionStringBuilder.Add("Initial Catalog", model.dbName);
+            sqlConnectionStringBuilder.Encrypt = false;
+            if (model.dbAuthType.ToLower() == "username")
+            {
+                sqlConnectionStringBuilder.Add("User ID", model.dbUsername);
+                sqlConnectionStringBuilder.Add("Password", model.dbPassword);
+            }
+            else
+            {
+                sqlConnectionStringBuilder.Add("Integrated Security", "SSPI");
+            }
+
+            return sqlConnectionStringBuilder.ConnectionString;
+        }
+
+        public int GetTotalRecords(string connectionString, string sqlCount, string sql, List<KeyValuePair<string, string>> parameters = null)
+        {
+            int totalRecords = 0;
+
+            try
+            {
+                using (SqlConnection conn = new SqlConnection(connectionString))
+                {
+                    conn.Open();
+
+                    using (SqlCommand command = new SqlCommand(sqlCount, conn))
+                    {
+                        if (parameters != null)
+                        {
+                            parameters.ForEach(x => command.Parameters.Add(new SqlParameter(x.Key, x.Value)));
+                        }
+
+                        if (!sql.StartsWith("EXEC")) totalRecords = Math.Max(totalRecords, (int)command.ExecuteScalar());
+
+                    }
+
+                    conn.Close();
+                }
+            }
+            catch (Exception ex)
+            {
+                // Handle exception (log, rethrow, etc.)
+                throw new Exception($"Error executing SQL query for total records: {ex.Message}", ex);
+            }
+
+            return totalRecords;
+        }
+
+        public async Task<TableViewModel> GetSchemaFromSql(string connString, TableViewModel table, string sql, bool dynamicColumns)
+        {
+            using (SqlConnection conn = new SqlConnection(connString))
+            {
+                // open the connection to the database 
+                await conn.OpenAsync().ConfigureAwait(false);
+
+                using (SqlCommand cmd = new SqlCommand(sql, conn))
+                {
+                    cmd.CommandType = CommandType.Text;
+                    using (SqlDataReader reader = await cmd.ExecuteReaderAsync().ConfigureAwait(false))
+                    {
+                        var idx = 0;
+                        DataTable schemaTable = new DataTable();
+
+                        if (dynamicColumns)
+                        {
+                            while (await reader.ReadAsync().ConfigureAwait(false))
+                            {
+                                table.Columns.Add(new ColumnViewModel
+                                {
+                                    ColumnName = Convert.ToString(reader[0]),
+                                    DisplayName = Convert.ToString(reader[0])
+                                });
+                            }
+                        }
+                        else
+                        {
+                            schemaTable = reader.GetSchemaTable();
+                            foreach (DataRow dr in schemaTable.Rows)
+                            {
+                                var column = new ColumnViewModel
+                                {
+                                    ColumnName = dr["ColumnName"].ToString(),
+                                    DisplayName = dr["ColumnName"].ToString(),
+                                    PrimaryKey = dr["ColumnName"].ToString().ToLower().EndsWith("id") && idx == 0,
+                                    DisplayOrder = idx,
+                                    FieldType = ConvertToJetDataType(dr["ProviderType"].ToString()).ToString(),
+                                    AllowedRoles = new List<string>(),
+                                    Selected = true
+                                };
+
+                                idx++;
+                                table.Columns.Add(column);
+                            }
+                        }
+                        table.Columns = table.Columns.OrderBy(x => x.DisplayOrder).ToList();
+                    }
+                }
+            }
+            return table;
+        }
+
+        private bool IsAllowedSql(string input)
+        {
+            if (string.IsNullOrWhiteSpace(input)) return false;
+
+            // Convert to lowercase for case-insensitive checks
+            string lowerInput = input.ToLowerInvariant();
+
+            // Disallow dangerous SQL keywords
+            string[] blockedKeywords = { "drop ", "delete ", "insert ", "update ", "truncate ", "alter ", "exec ", "execute ", "create ", "--", ";", "/*", "*/" };
+
+            foreach (var keyword in blockedKeywords)
+            {
+                if (lowerInput.Contains(keyword))
+                {
+                    return false; // Invalid SQL detected
+                }
+            }
+
+            // Only allow SELECT statements 
+            if (!lowerInput.TrimStart().StartsWith("select "))
+            {
+                return false;
+            }
+
+            return true;
+        }
+
+        public DataTable ExecuteQuery(string connectionString, string sql, List<KeyValuePair<string, string>> parameters = null)
+        {
+            //if (!IsAllowedSql(sql)) throw new Exception("Invalid Query found");
+
+            DataTable dataTable = new DataTable();
+
+            try
+            {
+                using (SqlConnection conn = new SqlConnection(connectionString))
+                {
+                    conn.Open();
+
+                    using (SqlCommand command = new SqlCommand(sql.Replace("{FROM}", "FROM"), conn))
+                    {
+                        command.CommandTimeout = 60 * 5;
+                        if (parameters != null)
+                        {
+                            if (sql.StartsWith("EXEC "))
+                            {
+                                command.CommandText = sql.Replace("EXEC ", "");
+                                command.CommandType = CommandType.StoredProcedure;
+                            }
+                            parameters.ForEach(x => command.Parameters.Add(new SqlParameter(x.Key, x.Value)));
+                        }
+                        using (SqlDataAdapter adapter = new SqlDataAdapter(command))
+                        {
+                            adapter.Fill(dataTable);
+                        }
+                    }
+
+                    conn.Close();
+                }
+            }
+            catch (Exception ex)
+            {
+                // Handle exception (log, rethrow, etc.)
+                throw new Exception($"Error executing SQL query: {ex.Message}", ex);
+            }
+
+            return dataTable;
+        }
+
+        public DataSet ExecuteDataSetQuery(string connectionString, string combinedSqls, List<KeyValuePair<string, string>> parameters = null)
+        {
+            var dts = new DataSet();
+            try
+            {
+                using (var conn = new SqlConnection(connectionString))
+                using (var cmd = new SqlCommand(combinedSqls, conn))
+                using (var adp = new SqlDataAdapter(cmd))
+                {
+                    if (parameters != null)
+                    {
+                        parameters.ForEach(x => cmd.Parameters.Add(new SqlParameter(x.Key, x.Value)));
+                    }
+                    adp.Fill(dts);
+                }
+            }
+            catch (Exception ex)
+            {
+                throw new Exception($"Error executing SQL query: {ex.Message}", ex);
+            }
+            return dts;
+        }
+        public static FieldTypes ConvertToJetDataType(string dbType)
+        {
+            SqlDbType sqlDbDataType;
+
+            if (!Enum.TryParse(dbType, true, out sqlDbDataType))
+            {
+                sqlDbDataType = SqlDbType.Text; // default to text
+            }
+
+            switch (((SqlDbType)sqlDbDataType))
+            {
+                case SqlDbType.VarChar:
+                    return FieldTypes.Varchar; // "varchar";
+                case SqlDbType.BigInt:
+                    return FieldTypes.Int; // "int";       // In Jet this is 32 bit while bigint is 64 bits
+                case SqlDbType.Binary:
+                case SqlDbType.VarBinary:
+                    return FieldTypes.Varchar; // "binary";
+                case SqlDbType.Bit:
+                    return FieldTypes.Boolean; // "bit";
+                case SqlDbType.Char:
+                    return FieldTypes.Varchar; // "char";
+                case SqlDbType.Money:
+                    return FieldTypes.Money; // "decimal";
+                case SqlDbType.DateTime:
+                case SqlDbType.Date:
+                    return FieldTypes.DateTime; // "datetime";
+                case SqlDbType.Decimal:
+                case SqlDbType.Float:
+                    return FieldTypes.Double; // "decimal";
+                case SqlDbType.Int:
+                    return FieldTypes.Int; // "int";
+                case SqlDbType.SmallInt:
+                    return FieldTypes.Int; // "single";
+                case SqlDbType.TinyInt:
+                    return FieldTypes.Int; // "smallint";  // Signed byte not handled by jet so we need 16 bits
+                case SqlDbType.UniqueIdentifier:
+                default:
+                    return FieldTypes.Varchar; // 
+                    //throw new ArgumentException(string.Format("The data type {0} is not handled by Jet. Did you retrieve this from Jet?", ((SqlDbType)SqlDataType)));
+            }
+        }
+
+        public async Task<List<TableViewModel>> GetTables(string type = "TABLE", string? accountKey = null, string? dataConnectKey = null)
+        {
+            var tables = new List<TableViewModel>();
+
+            var currentTables = new List<TableViewModel>();
+
+            if (!String.IsNullOrEmpty(accountKey) && !String.IsNullOrEmpty(dataConnectKey))
+            {
+                currentTables = await DotNetReportHelper.GetApiTables(accountKey, dataConnectKey, true);
+                currentTables = currentTables.Where(x => !string.IsNullOrEmpty(x.TableName)).ToList();
+            }
+
+            var connString = await DotNetReportHelper.GetConnectionString(DotNetReportHelper.GetConnection(dataConnectKey), false);
+            using (SqlConnection conn = new SqlConnection(connString))
+            {
+                // open the connection to the database 
+                conn.Open();
+
+                // Get the Tables
+                var schemaTable = conn.GetSchema("Tables", new string[] { null, null, null, type == "TABLE" ? "BASE TABLE" : "VIEW" });
+
+                // Store the table names in the class scoped array list of table names
+                for (int i = 0; i < schemaTable.Rows.Count; i++)
+                {
+                    var schemaName = schemaTable.Rows[i]["TABLE_SCHEMA"].ToString();
+                    var tableName = schemaTable.Rows[i]["TABLE_NAME"].ToString();
+
+                    // see if this table is already in database
+                    var matchTable = currentTables.FirstOrDefault(x =>
+                        x.TableName.Equals(tableName, StringComparison.OrdinalIgnoreCase) &&
+                        x.SchemaName.Equals(schemaName, StringComparison.OrdinalIgnoreCase)
+                    );
+                    var table = new TableViewModel
+                    {
+                        Id = matchTable != null ? matchTable.Id : 0,
+                        SchemaName = schemaName,
+                        TableName = tableName,
+                        DisplayName = matchTable != null ? matchTable.DisplayName : tableName,
+                        Categories = matchTable?.Categories ?? new List<CategoryViewModel>(),
+                        IsView = type == "VIEW",
+                        Selected = matchTable != null,
+                        Columns = new List<ColumnViewModel>(),
+                        AllowedRoles = matchTable != null ? matchTable.AllowedRoles : new List<string>(),
+                        AccountIdField = matchTable != null ? matchTable.AccountIdField : ""
+                    };
+                    var dtField = conn.GetSchema("Columns", new string[] { null, schemaName, tableName });
+                    var idx = 0;
+
+                    foreach (DataRow dr in dtField.Rows)
+                    {
+                        ColumnViewModel matchColumn = matchTable != null ? matchTable.Columns.FirstOrDefault(x => x.ColumnName.ToLower() == dr["COLUMN_NAME"].ToString().ToLower()) : null;
+                        var column = new ColumnViewModel
+                        {
+                            ColumnName = matchColumn != null ? matchColumn.ColumnName : dr["COLUMN_NAME"].ToString(),
+                            DisplayName = matchColumn != null ? matchColumn.DisplayName : dr["COLUMN_NAME"].ToString(),
+                            PrimaryKey = matchColumn != null ? matchColumn.PrimaryKey : dr["COLUMN_NAME"].ToString().ToLower().EndsWith("id") && idx == 0,
+                            DisplayOrder = matchColumn != null ? matchColumn.DisplayOrder : idx++,
+                            FieldType = matchColumn != null ? matchColumn.FieldType : ConvertToJetDataType(dr["DATA_TYPE"].ToString()).ToString(),
+                            AllowedRoles = matchColumn != null ? matchColumn.AllowedRoles : new List<string>()
+                        };
+
+                        if (matchColumn != null)
+                        {
+                            column.ForeignKey = matchColumn.ForeignKey;
+                            column.ForeignJoin = matchColumn.ForeignJoin;
+                            column.ForeignTable = matchColumn.ForeignTable;
+                            column.ForeignKeyField = matchColumn.ForeignKeyField;
+                            column.ForeignValueField = matchColumn.ForeignValueField;
+                            column.Id = matchColumn.Id;
+                            column.DoNotDisplay = matchColumn.DoNotDisplay;
+                            column.DisplayOrder = matchColumn.DisplayOrder;
+                            column.ForceFilter = matchColumn.ForceFilter;
+                            column.ForceFilterForTable = matchColumn.ForceFilterForTable;
+                            column.RestrictedDateRange = matchColumn.RestrictedDateRange;
+                            column.RestrictedStartDate = matchColumn.RestrictedStartDate;
+                            column.RestrictedEndDate = matchColumn.RestrictedEndDate;
+                            column.ForeignParentKey = matchColumn.ForeignParentKey;
+                            column.ForeignParentApplyTo = matchColumn.ForeignParentApplyTo;
+                            column.ForeignParentTable = matchColumn.ForeignParentTable;
+                            column.ForeignParentKeyField = matchColumn.ForeignParentKeyField;
+                            column.ForeignParentValueField = matchColumn.ForeignParentValueField;
+                            column.ForeignParentRequired = matchColumn.ForeignParentRequired;
+                            column.JsonStructure = matchColumn.JsonStructure;
+                            column.ForeignFilterOnly = matchColumn.ForeignFilterOnly;
+
+                            column.Selected = true;
+                        }
+
+                        table.Columns.Add(column);
+                    }
+                    // add columns not in db, but in dotnet report
+                    if (matchTable != null)
+                    {
+                        table.Columns.AddRange(matchTable.Columns.Where(x => !table.Columns.Select(c => c.Id).Contains(x.Id)).ToList());
+                    }
+
+                    table.Columns = table.Columns.OrderBy(x => x.DisplayOrder).ToList();
+                    tables.Add(table);
+                }
+
+                // add tables not in db, but in dotnet report
+                var notMatchedTables = currentTables.Where(x => !tables.Select(c => c.Id).Contains(x.Id) && ((type == "TABLE") ? !x.IsView : x.IsView)).ToList();
+                if (notMatchedTables.Any())
+                {
+                    foreach (var notMatchedTable in notMatchedTables)
+                    {
+                        notMatchedTable.Selected = true;
+                        notMatchedTable.Columns = await DotNetReportHelper.GetApiFields(accountKey, dataConnectKey, notMatchedTable.Id);
+                        notMatchedTable.Columns.ForEach(x => x.Selected = true);
+                    }
+                    tables.AddRange(notMatchedTables);
+                }
+                conn.Close();
+                conn.Dispose();
+            }
+
+            return tables;
+        }
+        public async Task<List<TableViewModel>> GetSearchProcedure(string value = null, string accountKey = null, string dataConnectKey = null)
+        {
+            var tables = new List<TableViewModel>();
+            var connString = await DotNetReportHelper.GetConnectionString(DotNetReportHelper.GetConnection(dataConnectKey), false);
+            using (SqlConnection conn = new SqlConnection(connString))
+            {
+                // open the connection to the database 
+                conn.Open();
+                string spQuery = @"
+                        SELECT ROUTINE_NAME, ROUTINE_DEFINITION, ROUTINE_SCHEMA 
+                        FROM INFORMATION_SCHEMA.ROUTINES 
+                        WHERE ROUTINE_DEFINITION LIKE @SearchValue 
+                        AND ROUTINE_TYPE = 'PROCEDURE'";
+                SqlCommand cmd = new SqlCommand(spQuery, conn);
+                cmd.CommandType = CommandType.Text;
+                cmd.Parameters.Add(new SqlParameter("@SearchValue", SqlDbType.NVarChar)).Value = $"%{value}%";
+
+                DataTable dtProcedures = new DataTable();
+                dtProcedures.Load(cmd.ExecuteReader());
+                int count = 1;
+                foreach (DataRow dr in dtProcedures.Rows)
+                {
+                    var procName = dr["ROUTINE_NAME"].ToString();
+                    var procSchema = dr["ROUTINE_SCHEMA"].ToString();
+                    using (cmd = new SqlCommand($"[{procSchema}].[{procName}]", conn))
+                    {
+                        cmd.CommandType = CommandType.StoredProcedure;
+                        // Get the parameters.
+                        SqlCommandBuilder.DeriveParameters(cmd);
+                        List<ParameterViewModel> parameterViewModels = new List<ParameterViewModel>();
+                        foreach (SqlParameter param in cmd.Parameters)
+                        {
+                            if (param.Direction == ParameterDirection.Input)
+                            {
+                                var parameter = new ParameterViewModel
+                                {
+                                    ParameterName = param.ParameterName,
+                                    DisplayName = param.ParameterName,
+                                    ParameterValue = param.Value != null ? param.Value.ToString() : "",
+                                    ParamterDataTypeOleDbTypeInteger = Convert.ToInt32(param.SqlDbType),
+                                    ParameterDataTypeString = DotNetReportHelper.GetType(ConvertToJetDataType(param.SqlDbType.ToString())).Name
+                                };
+                                if (parameter.ParameterDataTypeString.StartsWith("Int")) parameter.ParameterDataTypeString = "Int";
+                                parameterViewModels.Add(parameter);
+                            }
+                        }
+                        DataTable dt = null;
+                        try
+                        {
+                            cmd = new SqlCommand($"[{procSchema}].[{procName}]", conn);
+                            cmd.CommandType = CommandType.StoredProcedure;
+                            foreach (var data in parameterViewModels)
+                            {
+                                cmd.Parameters.Add(new SqlParameter { Value = DBNull.Value, ParameterName = data.ParameterName, Direction = ParameterDirection.Input, IsNullable = true });
+                            }
+                            using (SqlDataReader reader = cmd.ExecuteReader(CommandBehavior.SchemaOnly))
+                            {
+                                dt = reader.GetSchemaTable();
+                            }
+                        }
+                        catch
+                        {
+                            dt = null;
+                        }
+
+                        List<ColumnViewModel> columnViewModels = new List<ColumnViewModel>();
+                        if (dt != null)
+                        {
+                            for (int i = 0; i < dt.Rows.Count; i++)
+                            {
+                                var column = new ColumnViewModel
+                                {
+                                    ColumnName = dt.Rows[i].ItemArray[0].ToString(),
+                                    DisplayName = dt.Rows[i].ItemArray[0].ToString(),
+                                    FieldType = ConvertToJetDataType(dt.Rows[i]["ProviderType"].ToString()).ToString()
+                                };
+                                columnViewModels.Add(column);
+                            }
+                        }
+                        tables.Add(new TableViewModel
+                        {
+                            TableName = procName,
+                            SchemaName = dr["ROUTINE_SCHEMA"].ToString(),
+                            DisplayName = procName,
+                            Parameters = parameterViewModels,
+                            Columns = columnViewModels
+                        });
+                        count++;
+                    }
+                }
+                conn.Close();
+                conn.Dispose();
+            }
+            return tables;
+        }
+
+    }
+
+    public class ExportSession
+    {
+        public DotNetReportSettings Settings { get; set; }
+        public int ReportId { get; set; }
+        public string ReportSql { get; set; }
+        public string ConnectKey { get; set; }
+    }
+
+    public static class ExportSessionStore
+    {
+        private static readonly MemoryCache _sessions = new MemoryCache(new MemoryCacheOptions());
+
+        public static string Save(ExportSession session)
+        {
+            var id = Guid.NewGuid().ToString("N");
+            _sessions.Set(id, session, TimeSpan.FromMinutes(5));
+            return id;
+        }
+
+        public static ExportSession Get(string id)
+        {
+            if (string.IsNullOrWhiteSpace(id)) return null;
+            return _sessions.Get<ExportSession>(id);
+        }
+    }
+}

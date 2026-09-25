@@ -1,0 +1,4366 @@
+﻿/// dotnet Report Builder view model v6.0.0
+/// License must be purchased for commercial use
+/// 2024 (c) www.dotnetreport.com
+
+var manageViewModel = function (options) {
+	var self = this;
+
+	self.keys = {
+		AccountApiKey: options.model.AccountApiKey,
+		DatabaseApiKey: options.model.DatabaseApiKey
+	};
+
+	window.currentUserId = options.currentUserId;
+	self.previewData = ko.observable();
+	self.activeTable = ko.observable();
+	self.DataConnections = ko.observableArray([]);
+	self.Tables = new tablesViewModel(options, self.keys, self.previewData, self.activeTable);
+	self.Procedures = new proceduresViewModel(options);
+	self.DbConfig = {};
+	self.UserAndRolesConfig = {};
+	self.Functions = new customFunctionManageModel(options, self.keys);
+	self.pager = new pagerViewModel({autoPage: true, pageSize: 10});
+	self.pager.totalRecords(self.Tables.model().length);
+	self.onlyApi = ko.observable(options.onlyApi);
+	self.ChartDrillDownData = null;
+	self.activeProcedure = ko.observable();
+
+	self.emailQueries = new function () {
+		var q = this;
+		var validator = new validation();
+		function blank() {
+			return { id: ko.observable(0), name: ko.observable(''), description: ko.observable(''), clientId: ko.observable(''), queryType: ko.observable('EmailList'), sqlQuery: ko.observable('') };
+		}
+		q.queries = ko.observableArray([]);
+		q.queryTypes = [
+			{ value: 'EmailList', label: 'Subscription recipients' },
+			{ value: 'Users', label: 'User list' },
+			{ value: 'UserRoles', label: 'User role list' },
+			{ value: 'Clients', label: 'Client list' }
+		];
+		q.typeLabel = function (value) {
+			var match = _.find(q.queryTypes, { value: value || 'EmailList' });
+			return match ? match.label : (value || '');
+		};
+		q.current = ko.observable(blank());
+		q.loaded = false;
+
+		q.load = function (force) {
+			if (q.loaded && !force) return;
+			q.loaded = true;
+			return ajaxcall({
+				url: options.reportsApiUrl,
+				data: { method: options.getEmailQueriesUrl, model: JSON.stringify({ includeGlobal: true, queryType: 'EmailList' }) }
+			}).done(function (x) {
+				if (x.d) x = x.d;
+				if (x.result) x = x.result;
+				q.queries(x.queries || []);
+			});
+		};
+
+		q.emailToDisplay = function (item) {
+			var id = item ? (item.EmailQueryId || 0) : 0;
+			if (!id) return (item && item.EmailTo) || '';
+			var match = _.find(q.queries(), { id: id });
+			return match ? match.name : 'Email List';
+		};
+
+		q.runQuery = function (sql, done) {
+			ajaxcall({
+				url: options.getPreviewFromSqlUrl,
+				type: 'POST',
+				data: JSON.stringify({
+					value: sql,
+					accountKey: self.keys.AccountApiKey,
+					dataConnectKey: self.keys.DatabaseApiKey,
+					dynamicColumns: false
+				})
+			}).done(function (result) {
+				if (result.d) result = result.d;
+				var error = result.Exception || result.errorMessage || (result.HasError ? 'The query returned an error.' : '');
+				done(error, result.ReportData);
+			}).fail(function () {
+				done('Could not reach the server to run the query.', null);
+			});
+		};
+
+		// Previews what is typed in the modal, so unsaved edits can be checked before saving.
+		q.previewCurrentQuery = function () {
+			var sql = q.current().sqlQuery();
+			if (!sql) { toastr.error('Enter a SQL query first'); return; }
+			q.runQuery(sql, function (error, data) {
+				if (error) { toastr.error('Query error: ' + error); return; }
+				q.showEmails(q.emailsFromResult(data), 'Preview');
+			});
+		};
+
+		q.emailsFromResult = function (reportData) {
+			if (!reportData || !reportData.Columns || !reportData.Rows) return [];
+			var idx = 0;
+			for (var i = 0; i < reportData.Columns.length; i++) {
+				var name = (reportData.Columns[i].ColumnName || '').toLowerCase();
+				if (name === 'email') { idx = i; break; }
+			}
+			var out = [];
+			reportData.Rows.forEach(function (r) {
+				var v = r.Items && r.Items[idx] ? (r.Items[idx].Value || '') : '';
+				v = (v + '').trim();
+				if (v && v.indexOf('@') >= 0 && out.indexOf(v) < 0) out.push(v);
+			});
+			return out;
+		};
+
+		q.showEmails = function (emails, title) {
+			if (!emails.length) { bootbox.alert('This query returned no email addresses.'); return; }
+			var rows = emails.map(function (e) { return '<div>' + $('<div>').text(e).html() + '</div>'; }).join('');
+			bootbox.alert({
+				title: title + ' - ' + emails.length + ' recipient' + (emails.length === 1 ? '' : 's'),
+				message: '<div style="max-height:320px;overflow:auto;">' + rows + '</div>'
+			});
+		};
+
+		q.previewQuery = function (item) {
+			ajaxcall({
+				url: options.previewEmailListUrl,
+				type: 'GET',
+				data: { id: item.id }
+			}).done(function (x) {
+				if (x.d) x = x.d;
+				if (!x || !x.success) { toastr.error((x && x.message) || 'Could not load the Email List'); return; }
+				if (!x.total) { bootbox.alert('This Email List returned no email addresses.'); return; }
+				var rows = x.emails.map(function (e) { return '<div>' + $('<div>').text(e).html() + '</div>'; }).join('');
+				var more = x.total > x.emails.length ? '<div class="text-muted mt-2">Showing ' + x.emails.length + ' of ' + x.total + '</div>' : '';
+				bootbox.alert({
+					title: item.name + ' - ' + x.total + ' recipient' + (x.total === 1 ? '' : 's'),
+					message: '<div style="max-height:320px;overflow:auto;">' + rows + '</div>' + more
+				});
+			});
+		};
+
+		q.addQuery = function () {
+			q.current(blank());
+			validator.clearForm('#email-query-modal');
+			$('#email-query-modal').modal('show');
+		};
+
+		q.editQuery = function (item) {
+			q.current({
+				id: ko.observable(item.id), name: ko.observable(item.name), description: ko.observable(item.description || ''),
+				clientId: ko.observable(item.clientId || ''), queryType: ko.observable(item.queryType || 'EmailList'), sqlQuery: ko.observable(item.sqlQuery || '')
+			});
+			validator.clearForm('#email-query-modal');
+			$('#email-query-modal').modal('show');
+		};
+
+		q.saveQuery = function () {
+			var c = q.current();
+			if (!validator.validateForm('#email-query-modal')) return;
+			q.runQuery(c.sqlQuery(), function (error) {
+				if (error) { toastr.error('Query is not valid and was not saved: ' + error); return; }
+				q.persistQuery(c);
+			});
+		};
+
+		q.persistQuery = function (c) {
+			ajaxcall({
+				url: options.reportsApiUrl,
+				data: {
+					method: options.saveEmailQueryUrl,
+					model: JSON.stringify({ id: c.id(), name: c.name(), description: c.description(), queryClientId: c.clientId(), queryType: c.queryType(), sqlQuery: c.sqlQuery() })
+				}
+			}).done(function (x) {
+				if (x.d) x = x.d;
+				if (x.result) x = x.result;
+				if (x && x.Message) { toastr.error(x.Message); return; }
+				toastr.success('Email list saved');
+				$('#email-query-modal').modal('hide');
+				q.load(true);
+			});
+		};
+
+		q.deleteQuery = function (item) {
+			bootbox.confirm("Are you sure you would like to delete the email list '" + item.name + "'?", function (r) {
+				if (!r) return;
+				ajaxcall({
+					url: options.reportsApiUrl,
+					data: { method: options.deleteEmailQueryUrl, model: JSON.stringify({ id: item.id }) }
+				}).done(function () {
+					toastr.success('Email list deleted');
+					q.load(true);
+				});
+			});
+		};
+	};
+	self.emailQueries.load();
+
+	self.schedules = ko.observableArray([]);
+	// Flattened one row per schedule so the table needs no nested foreach in the markup.
+	self.scheduleRows = ko.computed(function () {
+		var rows = [];
+		_.forEach(self.schedules(), function (r) {
+			_.forEach(r.Schedules || [], function (item, i) {
+				rows.push({
+					name: r.Name,
+					isDashboard: r.DashboardId !== 0,
+					isFirst: i === 0,
+					item: item
+				});
+			});
+		});
+		return rows;
+	});
+	self.settings = new settingPageViewModel(options);
+	self.usersRoles = new usersRolesViewModel(options, self.settings, self.previewData);
+	// Access editing opens in a modal (same template the report page uses).
+	self.accessTarget = ko.observable(null);
+	self.accessTargetName = ko.observable('');
+	self.openAccessModal = function (item, isFolder) {
+		if (!self.manageAccess) { toastr.error('Users and roles are still loading, please try again'); return; }
+		if (isFolder) { item.changeFolderAccess(true); } else { item.changeAccess(true); }
+		item._isFolder = isFolder;
+		self.accessTarget(item);
+		self.accessTargetName(isFolder ? item.FolderName : item.reportName);
+		$('#setup-access-modal').modal('show');
+	};
+	self.saveAccessModal = function () {
+		var t = self.accessTarget();
+		if (!t) return;
+		var done = function () {
+			$('#setup-access-modal').modal('hide');
+			if (t._isFolder) { t.changeFolderAccess(false); } else { t.changeAccess(false); }
+		};
+		var promise = t._isFolder ? t.saveFolderAccessChanges() : t.saveAccessChanges();
+		if (promise && promise.done) { promise.done(done); } else { done(); }
+	};
+
+	self.clientIdLabelText = self.settings.clientIdLabel;
+	self.clientIdOptions = ko.computed(function () {
+		return _.map(self.settings.clientIds() || [], function (c) {
+			return (c && typeof c === 'object') ? { id: c.id || '', text: c.text || c.id || '' } : { id: c, text: c };
+		});
+	});
+	self.ReportResult = ko.observable({
+		ReportSql: ko.observable()
+	});
+	self.isDirty = ko.observable(false);
+	self.selectedReport = ko.observable(null);
+	self.loadFromDatabase = function() {
+		bootbox.confirm("Confirm loading all Tables and Views from the database? Note: This action will discard unsaved changes and it may take some time.", function (r) {
+			if (r) {
+				ajaxcall({ url: options.loadSchemaUrl + '?databaseApiKey=' + self.currentConnectionKey() + '&onlyApi=false' }).done(function (model) {
+					self.onlyApi(false);
+					self.Tables.refresh(model);
+					self.LoadJoins();
+					self.LoadCategories();
+					self.activeTable(null)
+				});
+			}
+		});
+	}
+
+	self.refreshAll = function () {
+		var queryParams = Object.fromEntries((new URLSearchParams(window.location.search)).entries());
+		return ajaxcall({ url: options.loadSchemaUrl + '?databaseApiKey=' + (queryParams.databaseApiKey || '') + '&onlyApi=' + self.onlyApi() }).done(function (model) {
+			self.Tables.refresh(model);
+			self.LoadJoins();
+			self.LoadCategories();
+			self.activeTable(null)
+		});
+	}
+
+	self.activeTable.subscribe(function (newValue) {
+		if (!newValue) return;
+		setTimeout(function () {
+			const details = document.getElementById('tableDetails');
+			if (details) {
+				details.scrollIntoView({ behavior: 'smooth', block: 'start' });
+			}
+		}, 100);
+	});
+
+	self.activeProcedure.subscribe(function (newValue) {
+		if (!newValue) return;
+		setTimeout(function () {
+			const details = document.getElementById('procDetails');
+			if (details) {
+				details.scrollIntoView({ behavior: 'smooth', block: 'start' });
+			}
+		}, 100);
+	});
+
+	self.Tables.filteredTables.subscribe(function (x) {		
+		self.pager.totalRecords(x.length);
+		self.pager.currentPage(1);
+	});
+
+	self.customSql = new customSqlModel(options, self.keys, self.Tables, self.activeTable);
+	self.customTableMode = ko.observable(false);
+
+	self.pagedTables = ko.computed(function () {
+		var tables = self.Tables.filteredTables();
+		var usedOnly = self.Tables.usedOnly();
+
+		if (self.customTableMode()) {
+			tables = _.filter(tables, function (x) { return x.CustomTable(); });
+		} else {
+			tables = _.filter(tables, function (x) { return !x.CustomTable(); });
+		}
+
+		if (usedOnly) {
+			tables = _.filter(tables, function (x) { return x.Selected(); });
+		}
+
+		self.pager.totalRecords(tables.length);
+
+		var pageNumber = self.pager.currentPage();
+		var pageSize = self.pager.pageSize();
+
+		var startIndex = (pageNumber-1) * pageSize;
+		var endIndex = startIndex + pageSize;
+		return tables.slice(startIndex, endIndex < tables.length ? endIndex : tables.length);
+	});
+
+	self.foundProcedures = ko.observableArray([]);
+	self.searchProcedureTerm = ko.observable("");
+	self.Joins = ko.observableArray([]);
+	self.Joins.subscribe(function () {
+		self.isDirty(true);
+	});
+	self.reorderableJoins = ko.observableArray([]);
+
+	self.trackJoinChanges = function (join) {
+		join.JoinTable.subscribe(() => self.isDirty(true));
+		join.OtherTable.subscribe(() => self.isDirty(true));
+		join.FieldName.subscribe(() => self.isDirty(true));
+		join.JoinFieldName.subscribe(() => self.isDirty(true));
+		join.JoinType.subscribe(() => self.isDirty(true));
+	};
+
+
+	self.currentConnectionKey = ko.observable(self.keys.DatabaseApiKey);
+	self.canSwitchConnection = ko.computed(function () {
+		return self.currentConnectionKey() != self.keys.DatabaseApiKey;
+	});
+	self.switchConnection = function () {
+		if (self.canSwitchConnection()) {
+			bootbox.confirm("Are you sure you would like to switch your Database Connection?", function (r) {
+				if (r) {
+					window.location.href = window.location.pathname + "?" + $.param({ 'databaseApiKey': self.currentConnectionKey() })
+				}
+			});
+		}
+	}
+
+	self.JoinFilters = {
+		primaryTable: ko.observable(),
+		primaryField: ko.observable(),
+		joinType: ko.observable(),
+		joinTable: ko.observable(),
+		joinField: ko.observable()
+	}
+	self.filteredJoins = ko.computed(function () {
+		var primaryTableFilter = self.JoinFilters.primaryTable();
+		var primaryFieldFilter = self.JoinFilters.primaryField();
+		var joinTypeFilter = self.JoinFilters.joinType();
+		var joinTableFilter = self.JoinFilters.joinTable();
+		var joinFieldFilter = self.JoinFilters.joinField();
+
+		var joins = self.Joins();
+
+		return _.filter(joins, function (x) {
+			return (!primaryTableFilter || !x.JoinTable() || x.JoinTable().DisplayName().toLowerCase().indexOf(primaryTableFilter.toLowerCase()) >= 0)
+				&& (!primaryFieldFilter || !x.FieldName() || x.FieldName().toLowerCase().indexOf(primaryFieldFilter.toLowerCase()) >= 0)
+				&& (!joinTypeFilter || !x.JoinType() || x.JoinType().toLowerCase().indexOf(joinTypeFilter.toLowerCase()) >= 0)
+				&& (!joinTableFilter || !x.OtherTable() || x.OtherTable().DisplayName().toLowerCase().indexOf(joinTableFilter.toLowerCase()) >= 0)
+				&& (!joinFieldFilter || !x.JoinFieldName() || x.JoinFieldName().toLowerCase().indexOf(joinFieldFilter.toLowerCase()) >= 0);
+		});
+	});
+
+	self.joinsPager = new pagerViewModel({ autoPage: true });
+
+	self.pagedJoins = ko.computed(function () {
+		var joins = self.filteredJoins();
+
+		var pageNumber = self.joinsPager.currentPage();
+		var pageSize = self.joinsPager.pageSize();
+
+		var startIndex = (pageNumber - 1) * pageSize;
+		var endIndex = startIndex + pageSize;
+		return joins.slice(startIndex, endIndex < joins.length ? endIndex : joins.length);
+	});
+
+	self.pagedJoins.subscribe(function (paged) {
+		self.reorderableJoins(paged.slice());
+	});
+
+	self.filteredJoins.subscribe(function (x) {
+		self.joinsPager.totalRecords(x.length);
+		self.joinsPager.currentPage(1);
+	});
+
+	self.JoinTypes = ["INNER", "LEFT", "RIGHT", "CROSS"];
+
+	self.filterJoinsSorted = function () {
+		ko.toJS(self.filteredJoins());
+	};
+
+	self.sortDirection = {
+		primaryTable: ko.observable(true),  // true for ascending, false for descending
+		primaryField: ko.observable(true),
+		joinType: ko.observable(true),
+		joinTable: ko.observable(true),
+		joinField: ko.observable(true)
+	};
+	// Sorting functions
+	self.sortByPrimaryTable = function () {
+		var direction = self.sortDirection.primaryTable();
+		self.Joins.sort(function (a, b) {
+			var aValue = a.JoinTable().DisplayName().toLowerCase();
+			var bValue = b.JoinTable().DisplayName().toLowerCase();
+			return direction ? aValue.localeCompare(bValue) : bValue.localeCompare(aValue);
+		});
+		self.sortDirection.primaryTable(!direction);
+	};
+	self.sortByField = function () {
+		var direction = self.sortDirection.primaryField();
+		self.Joins.sort(function (a, b) {
+			var aValue = a.FieldName().toLowerCase();
+			var bValue = b.FieldName().toLowerCase();
+			return direction ? aValue.localeCompare(bValue) : bValue.localeCompare(aValue);
+		});
+		self.sortDirection.primaryField(!direction);
+	};
+	self.sortByJoinType = function () {
+		var direction = self.sortDirection.joinType();
+		self.Joins.sort(function (a, b) {
+			var aValue = a.JoinType().toLowerCase();
+			var bValue = b.JoinType().toLowerCase();
+			return direction ? aValue.localeCompare(bValue) : bValue.localeCompare(aValue);
+		});
+		self.sortDirection.joinType(!direction);
+	};
+	self.sortByJoinTable = function () {
+		var direction = self.sortDirection.joinTable();
+		self.Joins.sort(function (a, b) {
+			var aValue = a.OtherTable().DisplayName().toLowerCase();
+			var bValue = b.OtherTable().DisplayName().toLowerCase();
+			return direction ? aValue.localeCompare(bValue) : bValue.localeCompare(aValue);
+		});
+		self.sortDirection.joinTable(!direction);
+	};
+	self.sortByJoinField = function () {
+		var direction = self.sortDirection.joinField();
+		self.Joins.sort(function (a, b) {
+			var aValue = a.JoinFieldName().toLowerCase();
+			var bValue = b.JoinFieldName().toLowerCase();
+			return direction ? aValue.localeCompare(bValue) : bValue.localeCompare(aValue);
+		});
+		self.sortDirection.joinField(!direction);
+	};
+
+	self.joinSorted = function (args) {
+		// Rebuild full Joins list with page items in their new drag order
+		var allJoins = self.Joins();
+		var pageItemSet = new Set(self.reorderableJoins());
+		var reordered = self.reorderableJoins();
+		var result = [];
+		var pageIdx = 0;
+		for (var i = 0; i < allJoins.length; i++) {
+			if (pageItemSet.has(allJoins[i])) {
+				result.push(reordered[pageIdx++]);
+			} else {
+				result.push(allJoins[i]);
+			}
+		}
+		// Assign sequential JoinOrder to all items
+		_.forEach(result, function (e, i) {
+			e.JoinOrder(i);
+		});
+		self.Joins(result);
+		self.isDirty(true);
+	};
+
+	self.visualizeJoins = function () {
+		$("#joinModal").modal("show");
+
+		setTimeout(function () {
+			var tables = self.Tables.availableTables() || [];
+			var joins = self.Joins() || [];
+
+			tables.sort(function (a, b) {
+				return a.TableName().localeCompare(b.TableName());
+			});
+
+			var joinedColsMap = {};
+			joins.forEach(function (j) {
+				if (!joinedColsMap[j.TableId()]) joinedColsMap[j.TableId()] = new Set();
+				joinedColsMap[j.TableId()].add(j.FieldName());
+				if (!joinedColsMap[j.JoinedTableId()]) joinedColsMap[j.JoinedTableId()] = new Set();
+				joinedColsMap[j.JoinedTableId()].add(j.JoinFieldName());
+			});
+
+			var container = document.getElementById("joinDiagram");
+			container.innerHTML = "";
+
+			var svgNS = "http://www.w3.org/2000/svg";
+			var svg = document.createElementNS(svgNS, "svg");
+			svg.style.position = "absolute";
+
+			var defs = document.createElementNS(svgNS, "defs");
+			var marker = document.createElementNS(svgNS, "marker");
+			marker.setAttribute("id", "arrow");
+			marker.setAttribute("viewBox", "0 0 10 10");
+			marker.setAttribute("refX", "10");
+			marker.setAttribute("refY", "5");
+			marker.setAttribute("markerWidth", "5");
+			marker.setAttribute("markerHeight", "5");
+			marker.setAttribute("orient", "auto");
+			var arrowPath = document.createElementNS(svgNS, "path");
+			arrowPath.setAttribute("d", "M0,0 L10,5 L0,10 Z");
+			arrowPath.setAttribute("fill", "#999");
+			marker.appendChild(arrowPath);
+			defs.appendChild(marker);
+			svg.appendChild(defs);
+			container.appendChild(svg);
+
+			var tableWidth = 220;
+			var rowHeight = 18;
+			var titleHeight = 20;
+			var sideMargin = 20;
+			var spacingX = 30;
+			var spacingY = 30;
+
+			// We'll place N tables per row
+			var containerWidth = container.clientWidth;
+			// If the container is 0 at the start, you might need a fallback, e.g. 800
+			if (containerWidth === 0) containerWidth = 800;
+
+			var columnsPerRow = Math.max(1, Math.floor((containerWidth - sideMargin * 2) / (tableWidth + spacingX)));
+
+			var offsetX = sideMargin;
+			var offsetY = sideMargin;
+			var currentColCount = 0;
+			var rowMaxHeight = 0;
+
+			var tableData = [];
+
+			tables.forEach(function (t, index) {
+				var name = t.TableName();
+				var cols = t.Columns() || [];
+				var boxHeight = 30 + (cols.length * rowHeight);
+
+				var g = document.createElementNS(svgNS, "g");
+				g.style.cursor = "move";
+
+				var rect = document.createElementNS(svgNS, "rect");
+				rect.classList.add("main-rect");
+				rect.setAttribute("x", offsetX);
+				rect.setAttribute("y", offsetY);
+				rect.setAttribute("width", tableWidth);
+				rect.setAttribute("height", boxHeight);
+				rect.setAttribute("fill", "#fff");
+				rect.setAttribute("stroke", "#333");
+				rect.setAttribute("stroke-width", "1");
+				g.appendChild(rect);
+
+				var title = document.createElementNS(svgNS, "text");
+				title.setAttribute("x", offsetX + 5);
+				title.setAttribute("y", offsetY + 15);
+				title.style.fontSize = "14px";
+				title.style.fontWeight = "bold";
+				title.setAttribute("fill", "#000");
+				title.textContent = name;
+				g.appendChild(title);
+
+				var sep = document.createElementNS(svgNS, "line");
+				sep.setAttribute("x1", offsetX);
+				sep.setAttribute("x2", offsetX + tableWidth);
+				sep.setAttribute("y1", offsetY + 25);
+				sep.setAttribute("y2", offsetY + 25);
+				sep.setAttribute("stroke", "#333");
+				g.appendChild(sep);
+
+				var colPositions = [];
+
+				cols.forEach(function (c, idx2) {
+					var colY = offsetY + 25 + titleHeight + (idx2 * rowHeight);
+					var colX = offsetX + 5;
+					var highlight = joinedColsMap[t.Id()] && joinedColsMap[t.Id()].has(c.ColumnName());
+
+					if (highlight) {
+						var bgRect = document.createElementNS(svgNS, "rect");
+						bgRect.setAttribute("x", offsetX);
+						bgRect.setAttribute("y", colY - rowHeight + 8);
+						bgRect.setAttribute("width", tableWidth);
+						bgRect.setAttribute("height", rowHeight);
+						bgRect.setAttribute("fill", "#ffffcc");
+						g.appendChild(bgRect);
+					}
+
+					var colText = document.createElementNS(svgNS, "text");
+					colText.setAttribute("x", colX);
+					colText.setAttribute("y", colY);
+					colText.setAttribute("font-size", "12");
+					colText.setAttribute("fill", "#000");
+					colText.textContent = c.ColumnName();
+					if (highlight) colText.classList.add("column-selected");
+					g.appendChild(colText);
+
+					colPositions.push({
+						name: c.ColumnName(),
+						x: colX,
+						y: colY
+					});
+				});
+
+				svg.appendChild(g);
+
+				tableData.push({
+					table: t,
+					g: g,
+					x: offsetX,
+					y: offsetY,
+					width: tableWidth,
+					height: boxHeight,
+					columns: colPositions
+				});
+
+				rowMaxHeight = Math.max(rowMaxHeight, boxHeight);
+				currentColCount++;
+
+				if (currentColCount === columnsPerRow || index === tables.length - 1) {
+					offsetY += rowMaxHeight + spacingY;
+					offsetX = sideMargin;
+					rowMaxHeight = 0;
+					currentColCount = 0;
+				} else {
+					offsetX += (tableWidth + spacingX);
+				}
+			});
+
+			// Now we know how far we extended offsetY
+			// If there's a partial row, rowMaxHeight might be 0, so let's just ensure we add sideMargin
+			var totalDiagramHeight = offsetY + rowMaxHeight + sideMargin;
+			if (totalDiagramHeight < 800) totalDiagramHeight = 800; // minimum or use the largest offset
+			svg.setAttribute("width", containerWidth);
+			svg.setAttribute("height", totalDiagramHeight);
+
+			var lines = [];
+			joins.forEach(function (j) {
+				var t1 = tableData.find(function (td) { return td.table.Id() === j.TableId(); });
+				var t2 = tableData.find(function (td) { return td.table.Id() === j.JoinedTableId(); });
+				if (!t1 || !t2) return;
+
+				var col1 = t1.columns.find(function (c) { return c.name === j.FieldName(); });
+				var col2 = t2.columns.find(function (c) { return c.name === j.JoinFieldName(); });
+				if (!col1 || !col2) return;
+
+				var line = document.createElementNS(svgNS, "line");
+				line.setAttribute("x1", col1.x - 10);
+				line.setAttribute("y1", col1.y - 4);
+				line.setAttribute("x2", col2.x - 10);
+				line.setAttribute("y2", col2.y - 4);
+				line.setAttribute("stroke", "#999");
+				line.setAttribute("stroke-width", "1.5");
+				line.setAttribute("marker-end", "url(#arrow)");
+				svg.appendChild(line);
+
+				lines.push({
+					element: line,
+					t1: t1,
+					t2: t2,
+					col1: col1,
+					col2: col2
+				});
+			});
+
+			function clearSelection() {
+				tableData.forEach(function (td) {
+					td.g.classList.remove("table-selected");
+				});
+				lines.forEach(function (l) {
+					l.element.classList.remove("line-highlight");
+				});
+			}
+
+			function highlightTable(data) {
+				data.g.classList.add("table-selected");
+				lines.forEach(function (l) {
+					if (l.t1 === data || l.t2 === data) {
+						l.element.classList.add("line-highlight");
+					}
+				});
+			}
+
+			function onMouseDown(e) {
+				clearSelection();
+				var g = e.currentTarget;
+				g._dragging = true;
+				g._startX = e.offsetX;
+				g._startY = e.offsetY;
+				var data = tableData.find(function (td) { return td.g === g; });
+				highlightTable(data);
+			}
+
+			function onMouseUp(e) {
+				e.currentTarget._dragging = false;
+			}
+
+			function onMouseMove(e) {
+				var g = e.currentTarget;
+				if (!g._dragging) return;
+				var dx = e.offsetX - g._startX;
+				var dy = e.offsetY - g._startY;
+				g._startX = e.offsetX;
+				g._startY = e.offsetY;
+				var data = tableData.find(function (td) { return td.g === g; });
+				data.x += dx;
+				data.y += dy;
+
+				var rect = g.querySelector("rect.main-rect");
+				rect.setAttribute("x", data.x);
+				rect.setAttribute("y", data.y);
+
+				var allText = g.querySelectorAll("text");
+				if (allText.length) {
+					var titleText = allText[0];
+					titleText.setAttribute("x", data.x + 5);
+					titleText.setAttribute("y", data.y + 15);
+
+					var sepLine = g.querySelector("line");
+					if (sepLine) {
+						sepLine.setAttribute("x1", data.x);
+						sepLine.setAttribute("x2", data.x + data.width);
+						sepLine.setAttribute("y1", data.y + 25);
+						sepLine.setAttribute("y2", data.y + 25);
+					}
+				}
+
+				data.columns.forEach(function (c, i) {
+					c.x = data.x + 5;
+					c.y = data.y + 25 + titleHeight + i * rowHeight;
+					allText[i + 1].setAttribute("x", c.x);
+					allText[i + 1].setAttribute("y", c.y);
+				});
+
+				var highlightRects = Array.prototype.filter.call(
+					g.querySelectorAll("rect"),
+					function (r) { return !r.classList.contains("main-rect"); }
+				);
+				highlightRects.forEach(function (r, i) {
+					var newY = data.y + 25 + titleHeight + i * rowHeight - rowHeight + 8;
+					r.setAttribute("x", data.x);
+					r.setAttribute("y", newY);
+				});
+
+				// Update lines
+				lines.forEach(function (l) {
+					if (l.t1 === data || l.t2 === data) {
+						var cx1 = l.col1.x - 10;
+						var cy1 = l.col1.y - 4;
+						var cx2 = l.col2.x - 10;
+						var cy2 = l.col2.y - 4;
+						l.element.setAttribute("x1", cx1);
+						l.element.setAttribute("y1", cy1);
+						l.element.setAttribute("x2", cx2);
+						l.element.setAttribute("y2", cy2);
+					}
+				});
+			}
+
+			tableData.forEach(function (td) {
+				td.g.addEventListener("mousedown", onMouseDown);
+				td.g.addEventListener("mouseup", onMouseUp);
+				td.g.addEventListener("mousemove", onMouseMove);
+			});
+		}, 200);
+	};
+
+	self.AddAllRelations = function () {
+		var rawTables = ko.toJS(self.Tables.availableTables) || [];
+		if (rawTables.length === 0) {
+			toastr.error("Please select some tables first");
+			return;
+		}
+
+		function isIdField(name) {
+			return name && (name.toLowerCase().endsWith("id")) && name.toLowerCase() != "id";
+		}
+
+		bootbox.confirm("Do you want to add suggested joins for fields ending in 'Id'?", function (confirmed) {
+			if (!confirmed) return;
+
+			var newJoins = [];
+			var existingJoins = new Set(
+				(self.Joins() || []).map(function (join) {
+					return join.TableId() + "-" + join.JoinedTableId() + "-" + join.JoinFieldName();
+				})
+			);
+
+			rawTables.forEach(function (t1) {
+				if (!t1.Columns || t1.Columns.length === 0) return;
+				var t1PrimaryKey = t1.Columns[0].ColumnName;
+		
+				t1.Columns.forEach(function (col1) {
+					rawTables.forEach(function (t2) {
+						if (t1.Id === t2.Id) return;
+						if (!t2.Columns || t2.Columns.length === 0) return;
+						var t2PrimaryKey = t2.Columns[0].ColumnName;
+						if (!isIdField(t2PrimaryKey)) return;
+						var matchByIdLogic = (isIdField(col1.ColumnName) && (col1.ColumnName.toLowerCase() === t2.TableName.toLowerCase() + "id" || col1.ColumnName.toLowerCase() == t2PrimaryKey.toLowerCase()));
+
+						var matchBySameName = false;
+						if (!matchByIdLogic) {
+							var exactMatch = t2.Columns.find(function (col2) {
+								return col2.ColumnName === col1.ColumnName && isIdField(col1.ColumnName) && isIdField(col2.ColumnName)
+							});
+
+							if (exactMatch) {
+								matchBySameName = true;
+							}
+						}
+
+						if (matchByIdLogic || matchBySameName) {
+							var joinKey1 = t1.Id + "-" + t2.Id + "-" + col1.ColumnName;
+							if (!existingJoins.has(joinKey1)) {
+								newJoins.push(
+									self.setupJoin({
+										TableId: t1.Id,
+										JoinedTableId: t2.Id,
+										JoinType: self.JoinTypes[0],
+										FieldName: col1.ColumnName,
+										JoinFieldName: matchByIdLogic ? t2PrimaryKey : col1.ColumnName
+									})
+								);
+								existingJoins.add(joinKey1);
+							}
+
+							var joinKey2 = t2.Id + "-" + t1.Id + "-" + (matchByIdLogic ? t1PrimaryKey : col1.ColumnName);
+							if (!existingJoins.has(joinKey2)) {
+								newJoins.push(
+									self.setupJoin({
+										TableId: t2.Id,
+										JoinedTableId: t1.Id,
+										JoinType: self.JoinTypes[0],
+										FieldName: matchByIdLogic ? t2PrimaryKey : col1.ColumnName,
+										JoinFieldName: col1.ColumnName
+									})
+								);
+								existingJoins.add(joinKey2);
+							}
+						}
+					});
+				});
+			});
+
+			if (newJoins.length > 0) {
+				self.Joins.push.apply(self.Joins, newJoins);
+				toastr.success("Added " + newJoins.length + " new joins.");
+			} else {
+				toastr.info("No matching columns found for automatic joins.");
+			}
+		});
+	};
+
+	self.editColumn = ko.observable();
+	self.isStoredProcColumn = ko.observable();
+	self.selectColumn = function (isStoredProcColumn, data, e) {
+		self.isStoredProcColumn(null);
+		self.editColumn(data);
+		self.isStoredProcColumn(isStoredProcColumn);
+	}
+	self.editParameter = ko.observable();
+	self.selectParameter = function (e) {
+		self.editParameter(e);
+	}
+
+	self.editAllowedRoles = ko.observable();
+	self.allRoles = ko.observableArray(); 
+	self.selectAllowedRoles = function (e) {
+		self.editAllowedRoles(e);
+	}
+
+	self.manageCategories = ko.observable();
+	self.selectedCategory = function (e) {
+		self.manageCategories(e);
+	}
+	self.isCategorySelected = function (category, selectedCategories) {
+		return ko.utils.arrayFirst(selectedCategories(), function (item,index) {
+			return item.CategoryId() === category.Id; // Match Id with CategoryId
+		}) !== null; // Return true if a match is found
+	};
+	self.Categories = ko.observableArray([]); // Use observableArray to hold an array of objects.
+	self.newCategoryName = ko.observable();
+	self.newCategoryDescription = ko.observable();
+	self.editingCategoryIndex = ko.observable(-1); // Use an index to track which category is being edited
+	self.addCategory = function () {
+		const newName = self.newCategoryName() ? self.newCategoryName().trim() : '';
+		const newDescription = self.newCategoryDescription() ? self.newCategoryDescription().trim() : '';
+		if (!newName) {
+			toastr.error("Please provide Category Name");
+			return;
+		}
+		const isDuplicateName = _.filter(self.Categories(), function (x) { return x.Name === newName; }).length > 0;
+		if (isDuplicateName) {
+			toastr.error("Category Name must be unique.");
+			return;
+		}
+		self.Categories.push({
+			Name: self.newCategoryName(),
+			Description: self.newCategoryDescription(),
+			Id:0
+		});
+		self.newCategoryName(null);
+		self.newCategoryDescription(null);
+	};
+
+	self.removeCategory = function (category) {
+		self.Categories.remove(category);
+	};
+	// Toggle edit mode for a category
+	self.toggleEdit = function (index) {
+		if (self.editingCategoryIndex() === index) {
+			self.editingCategoryIndex(-1); // Stop editing if it's already being edited
+		} else {
+			self.editingCategoryIndex(index); // Set the index to the category being edited
+		}
+	};
+	self.saveCategory = function (index) {
+		const category = self.Categories()[index]; // Get the currently editing category
+		const name = category.Name ? category.Name.trim() : '';
+		const description = category.Description ? category.Description.trim() : '';
+		if (!name) {
+			toastr.error("Please provide Category Name");
+			return;
+		}
+		const isDuplicateName = self.Categories().some((cat, idx) => idx !== index && cat.Name === name);
+		if (isDuplicateName) {
+			toastr.error("Category Name must be unique.");
+			return;
+		}
+		document.getElementById(`cat-name-${category.Id}`).textContent = name
+		document.getElementById(`cat-desc-${category.Id}`).textContent = description
+		self.editingCategoryIndex(-1);
+	};
+	self.saveCategories = function () {
+
+		if (self.editingCategoryIndex() !== -1) {
+			toastr.error("Please finish editing the current category before saving.");
+			return; // Exit the function if editing
+		}
+		ajaxcall({
+			url: options.apiUrl,
+			type: 'POST',
+			data: JSON.stringify({
+				method: options.saveCategoriesUrl,
+				model: JSON.stringify({
+					account: self.keys.AccountApiKey,
+					dataConnect: self.keys.DatabaseApiKey,
+					categories: self.Categories()
+				})
+			})
+		}).done(function (x) {
+			if (x.success) {
+				toastr.success("Saved Categories ");
+				self.LoadCategories();
+			} else {
+				toastr.error("Error saving Categories ");
+			}
+		});
+	};
+	self.deleteSchedule = function (e) {
+		bootbox.confirm("Are you sure you would like to delete this Schedule? This cannot be undone.", function (r) {
+			if (r) {
+				ajaxcall({
+					url: options.apiUrl,
+					type: 'POST',
+					data: JSON.stringify({
+						method: options.deleteScheduleUrl,
+						model: JSON.stringify({
+							scheduleId: e.Id,
+							account: self.keys.AccountApiKey,
+							dataConnect: self.keys.DatabaseApiKey,
+						})
+					})
+				}).done(function () {
+					toastr.success("Deleted Schedule");
+					self.LoadSchedules();
+				});
+			}
+		});
+	}
+
+	self.LoadSchedules = function () {
+		ajaxcall({
+			url: options.apiUrl,
+			type: 'POST',
+			data: JSON.stringify({
+				method: options.getSchedulesUrl,
+				model: JSON.stringify({
+					account: self.keys.AccountApiKey,
+					dataConnect: self.keys.DatabaseApiKey,
+					bypassThrottle: true
+				})
+			})
+		}).done(function (result) {
+			if (result.d) result = result.d;
+
+			self.schedules(result);
+		});
+	}
+
+	// Clean display of a schedule's export format (stored as JSON: {exportFormat, size, orientation}).
+	self.formatDisplay = function (fmt) {
+		if (!fmt) return '';
+		try {
+			if (typeof fmt === 'string' && fmt.trim().charAt(0) === '{') {
+				var o = JSON.parse(fmt);
+				var s = o.exportFormat || '';
+				if (o.size) s += ' (' + o.size + (o.orientation ? ', ' + o.orientation : '') + ')';
+				return s;
+			}
+			return fmt;
+		} catch (e) { return fmt; }
+	};
+
+	self.sentHistory = ko.observableArray([]);
+	self.sentHistoryPage = ko.observable(1);
+	self.sentHistoryPageSize = ko.observable(25);
+	self.sentHistoryTotal = ko.observable(0);
+	self.sentHistoryTotalPages = ko.observable(0);
+	self.sentHistoryLoading = ko.observable(false);
+	self.sentHistoryStartDate = ko.observable('');
+	self.sentHistoryEndDate = ko.observable('');
+
+	self.loadSentHistory = function (page) {
+		if (!page || page < 1) page = 1;
+		self.sentHistoryLoading(true);
+		var model = {
+			account: self.keys.AccountApiKey,
+			dataConnect: self.keys.DatabaseApiKey,
+			page: page,
+			pageSize: self.sentHistoryPageSize()
+		};
+		if (self.sentHistoryStartDate()) model.startDate = self.sentHistoryStartDate();
+		if (self.sentHistoryEndDate()) model.endDate = self.sentHistoryEndDate();
+		ajaxcall({
+			url: options.apiUrl,
+			type: 'POST',
+			data: JSON.stringify({
+				method: '/ReportApi/GetScheduleSentHistory',
+				model: JSON.stringify(model)
+			})
+		}).done(function (result) {
+			if (result && result.d) result = result.d;
+			if (!result) result = { items: [], page: 1, total: 0, totalPages: 0 };
+			self.sentHistory(result.items || []);
+			self.sentHistoryPage(result.page || 1);
+			self.sentHistoryTotal(result.total || 0);
+			self.sentHistoryTotalPages(result.totalPages || 0);
+		}).always(function () {
+			self.sentHistoryLoading(false);
+		});
+	}
+	self.LoadCategories = function () {
+		ajaxcall({
+			url: options.apiUrl,
+			type: 'POST',
+			data: JSON.stringify({
+				method: options.getCategoriesUrl,
+				model: JSON.stringify({
+					account: self.keys.AccountApiKey,
+					dataConnect: self.keys.DatabaseApiKey
+				})
+			})
+		}).done(function (result) {
+			if (result.d) result = result.d;
+			self.Tables.model().forEach(function (t) {
+				t.Categories(_.map(t.Categories(), function (e) {
+					return result.find(r => r.Id === (typeof e.Id === 'function' ? e.Id() : e.Id));
+				}).filter(Boolean));
+			});
+			self.Categories(result);
+		});
+	}
+	self.newDataConnection = {
+		Name: ko.observable(),
+		ConnectionKey: ko.observable(),
+		UseSchema: ko.observable(),
+		DatabaseType: ko.observable(),
+		copySchema: ko.observable(false),
+		copyFrom: ko.observable(),
+	}
+	self.editingDataConnection = ko.observable(false);
+
+	self.editDataConnectionModal = function () {
+		self.editingDataConnection(true);
+		var dc = self.DataConnections().find(x => self.currentConnectionKey() == x.DataConnectGuid);
+
+		if (!dc) {
+			toastr.error('Could not find Data Connection Details');
+			return;
+		}
+		self.newDataConnection.Name(dc.DataConnectName);
+		self.newDataConnection.ConnectionKey(dc.ConnectionKey);
+		self.newDataConnection.UseSchema(dc.UseSchema);
+		self.newDataConnection.DatabaseType(dc.DatabaseType);
+	}
+	self.newDataConnectionModal = function () {
+		self.editingDataConnection(false);
+		self.newDataConnection.Name('');
+		self.newDataConnection.ConnectionKey('');
+		self.newDataConnection.UseSchema(false);
+		self.newDataConnection.DatabaseType('MS SQL');
+	}
+
+	self.updateDataConnection = function () {
+		$(".form-group").removeClass("has-error");
+		if (!self.newDataConnection.Name()) {
+			$("#add-conn-name").closest(".form-group").addClass("has-error");
+			return false;
+		}
+		if (!self.newDataConnection.ConnectionKey()) {
+			$("#add-conn-key").closest(".form-group").addClass("has-error");
+			return false;
+		}
+
+		ajaxcall({
+			url: options.apiUrl,
+			type: 'POST',
+			data: JSON.stringify({
+				method: options.updateDataConnectionUrl,
+				model: JSON.stringify({
+					account: self.keys.AccountApiKey,
+					dataConnect: self.currentConnectionKey(),
+					useSchema: self.newDataConnection.UseSchema(),
+					dbType: self.newDataConnection.DatabaseType(),
+					connectionKey: self.newDataConnection.ConnectionKey(),
+					connectName: self.newDataConnection.Name()
+				})
+			})
+		}).done(function (result) {			
+			var dc = self.DataConnections().find(x => self.currentConnectionKey() == x.DataConnectGuid);
+			dc.DataConnectName = self.newDataConnection.Name();
+			dc.ConnectionKey = self.newDataConnection.ConnectionKey();
+			dc.UseSchema = self.newDataConnection.UseSchema();
+			dc.DatabaseType = self.newDataConnection.DatabaseType();
+			toastr.success("Data Connection updated successfully");
+			$('#add-connection-modal').modal('hide');
+		});
+
+		return true;
+	}
+
+	self.addDataConnection = function () {
+		$(".form-group").removeClass("has-error");
+		if (!self.newDataConnection.Name()) {
+			$("#add-conn-name").closest(".form-group").addClass("has-error");
+			return false;
+		}
+		if (!self.newDataConnection.ConnectionKey()) {
+			$("#add-conn-key").closest(".form-group").addClass("has-error");
+			return false;
+		}
+
+		ajaxcall({
+			url: options.apiUrl,
+			type: 'POST',
+			data: JSON.stringify({
+				method: options.addDataConnectionUrl,
+				model: JSON.stringify({
+					account: self.keys.AccountApiKey,
+					dataConnect: self.newDataConnection.copySchema() ? self.newDataConnection.copyFrom() : self.keys.DatabaseApiKey,
+					newDataConnect: self.newDataConnection.Name(),
+					connectionKey: self.newDataConnection.ConnectionKey(),
+					copySchema: self.newDataConnection.copySchema(),
+					useSchema: self.newDataConnection.UseSchema(),
+					dbType: self.newDataConnection.DatabaseType()
+				})
+			})
+		}).done(function (result) {
+			self.DataConnections.push({
+				Id: result.Id,
+				DataConnectName: self.newDataConnection.Name(),
+				ConnectionKey: self.newDataConnection.ConnectionKey(),
+				DataConnectGuid: result.DataConnectGuid,
+				UseSchema: result.UseSchema || false,
+				DatabaseType: result.DatabaseType
+			});
+
+			self.newDataConnection.Name('');
+			self.newDataConnection.ConnectionKey('');
+			toastr.success("Data Connection added successfully");
+			$('#add-connection-modal').modal('hide');
+		});
+
+		return true;
+	}
+
+	self.setupJoin = function (item) {
+		item.JoinTable = ko.observable();
+		item.OtherTable = ko.observable();
+		item.originalField = item.FieldName;
+		item.originalJoinField = item.JoinFieldName;
+		item.isNew = false;
+
+		item = ko.mapping.fromJS(item);
+
+		item.OtherTables = ko.computed(function () {
+			return $.map(self.Tables.model(), function (subitem) {
+
+				return ((item.JoinTable() != null && subitem.Id() == item.JoinTable().Id()) || subitem.Id() <= 0) ? null : subitem;
+
+			});
+		});
+
+		item.OtherTable.subscribe(function (subitem) {
+			//subitem.loadFields().done(function () {
+			//item.FieldName(item.originalField());
+			//item.JoinFieldName(item.originalJoinField());
+			//}); // Make sure fields are loaded
+		})
+
+		item.JoinTable.subscribe(function (subitem) {
+			//subitem.loadFields().done(function () {
+			//item.FieldName(item.originalField());
+			//item.JoinFieldName(item.originalJoinField());
+			//}); // Make sure fields are loaded
+		})
+
+		item.DeleteJoin = function () {
+			bootbox.confirm("Are you sure you would like to delete this Join?", function (r) {
+				if (r) {
+					self.Joins.remove(item);
+				}
+			});
+		};
+
+		item.JoinTable(_.filter(self.Tables.model(), function (x) { return x.Id() == item.TableId(); })[0]);
+		item.OtherTable(_.filter(item.OtherTables(), function (x) { return x.Id() == item.JoinedTableId(); })[0]);
+
+		return item;
+	};
+
+	self.LoadDataConnections = function () {
+
+		ajaxcall({
+			url: options.apiUrl,
+			type: 'POST',
+			data: JSON.stringify({
+				method: options.getDataConnectionsUrl,
+				model: JSON.stringify({
+					account: self.keys.AccountApiKey,
+					dataConnect: self.keys.DatabaseApiKey
+				})
+			})
+		}).done(function (result) {
+			self.DataConnections(result);
+			self.currentConnectionKey(self.keys.DatabaseApiKey);
+		});
+	}
+
+	self.searchStoredProcedure = function () {
+		if (!self.searchProcedureTerm()) {
+			toastr.error('Please enter a term to search stored procs');
+			return false;
+		}
+		self.foundProcedures([]);
+		ajaxcall({
+			url: options.searchProcUrl,
+			type: 'POST',
+			data: JSON.stringify({
+				value: self.searchProcedureTerm(),
+				accountKey: self.keys.AccountApiKey,
+				dataConnectKey: self.keys.DatabaseApiKey
+			})
+		}).done(function (result) {
+			if (result.d) result = result.d;
+
+			if (result.length == 0) {
+				toastr.error('No matching stored proc found, please try again.');
+			}
+			_.forEach(result, function (s) {
+				_.forEach(s.Columns, function (c) {
+					c.DisplayName = ko.observable(c.DisplayName);
+				});
+				_.forEach(s.Parameters, function (p) {
+					p.DisplayName = ko.observable(p.DisplayName);
+					p.ParameterValue = ko.observable(p.ParameterValue);
+				});
+
+				s.DisplayName = ko.observable(s.DisplayName);
+			});
+
+			self.foundProcedures(result)
+		});
+
+		return false;
+	}
+	self.exportProcedureJson = function (procName) {
+		var proc = _.find(self.Procedures.savedProcedures(), function (e) {
+			return e.TableName === procName;
+		});
+		var e = ko.mapping.toJS(proc, {
+			'ignore': ["dataTable", "deleteTable", "JoinTable"]
+		});
+		var exportJson = JSON.stringify(e, null, 2)
+		downloadJson(exportJson, e.TableName + ' Procedure' +'.json', 'application/json');
+	}
+	self.saveProcedure = function (procName, adding, jsonProcedure) {
+		var proc = jsonProcedure ? jsonProcedure : _.find(adding === true ? self.foundProcedures() : self.Procedures.savedProcedures(), function (e) {
+			return e.TableName === procName;
+		});
+
+		var e = ko.mapping.toJS(proc, {
+			'ignore': ["dataTable", "deleteTable", "JoinTable"]
+		});
+
+		ajaxcall({
+			url: options.apiUrl,
+			type: 'POST',
+			data: JSON.stringify({
+				method: options.saveProcUrl,
+				model: JSON.stringify({
+					model: jsonProcedure ? jsonProcedure : e,
+					account: self.keys.AccountApiKey,
+					dataConnect: self.keys.DatabaseApiKey
+				})
+			})
+		}).done(function (result) {
+			if (!result) {
+				toastr.error('Error saving Procedure: ' + result.Message);
+				return false;
+			}
+
+			if (adding) {
+				self.Procedures.savedProcedures.remove(_.find(self.Procedures.savedProcedures(), function (e) {
+					return e.TableName() === procName;
+				}));
+				proc.Id = result;
+				proc = ko.mapping.fromJS(proc);
+				self.Procedures.setupProcedure(proc);
+				self.Procedures.savedProcedures.push(proc);
+			}
+
+			toastr.success("Saved Procedure " + e.TableName);
+		});
+
+		return false;
+	}
+
+	self.LoadJoins = function () {
+		// Load and setup Relations
+
+		ajaxcall({
+			url: options.apiUrl,
+			type: 'POST',
+			data: JSON.stringify({
+				method: options.getRelationsUrl,
+				model: JSON.stringify({
+					account: self.keys.AccountApiKey,
+					dataConnect: self.keys.DatabaseApiKey
+				})
+			})
+		}).done(function (result) {
+			result.sort(function (a, b) { return (a.JoinOrder || 0) - (b.JoinOrder || 0); });
+			self.Joins($.map(result, function (item) {
+				var join = self.setupJoin(item);
+				self.trackJoinChanges(join);
+				return join;
+			}));
+			self.isDirty(false);
+		});
+	};
+
+	self.showNewJoinRow = ko.observable(false);
+	self.NewJoin = ko.observable(self.setupJoin({
+		TableId: 0,
+		JoinedTableId: 0,
+		JoinType: "INNER",
+		FieldName: "",
+		JoinFieldName: ""
+	}));
+
+	self.ConfirmAddJoin = function () {
+		const join = self.NewJoin();
+
+		if (!join.JoinTable() || !join.OtherTable()) {
+			toastr.error("Please select both Primary Table and Join Table.");
+			return;
+		}
+
+		if (!join.FieldName() || !join.JoinFieldName()) {
+			toastr.error("Please select both join fields.");
+			return;
+		}
+
+		join.isNew = true;
+		self.trackJoinChanges(join);
+		self.Joins.push(join);
+		// Reset form
+		self.NewJoin(self.setupJoin({
+			TableId: 0,
+			JoinedTableId: 0,
+			JoinType: "INNER",
+			FieldName: "",
+			JoinFieldName: ""
+		}));
+		self.showNewJoinRow(false);
+	};
+
+	self.AddJoin = function () {
+		self.showNewJoinRow(true);
+	};
+
+	self.DeleteVisibleJoins = function () {
+		const filtered = self.filteredJoins();
+		const total = self.Joins().length;
+
+		// Decide message
+		var message = filtered.length < total
+			? `Only filtered joins (${filtered.length}) will be deleted. This cannot be undone.<br><br>Do you want to continue?`
+			: `No filters applied. All ${total} joins will be deleted. This cannot be undone.<br><br>Are you sure you want to continue?`;
+
+		bootbox.confirm({
+			title: "Confirm Delete",
+			message: message,
+			buttons: {
+				cancel: {
+					label: 'Cancel',
+					className: 'btn-secondary'
+				},
+				confirm: {
+					label: 'Delete',
+					className: 'btn-danger'
+				}
+			},
+			callback: function (result) {
+				if (result) {
+					self.Joins.removeAll(filtered);
+					self.isDirty(true);
+					toastr.success(filtered.length + " join(s) deleted.");
+				}
+			}
+		});
+	};
+
+	self.getJoinsToSave = function (filteredJoins) {
+		_.forEach(self.Joins(), function (x) {
+			x.TableId(x.JoinTable().Id());
+			x.JoinedTableId(x.OtherTable().Id());
+		});
+
+		return $.map(
+			ko.mapping.toJS(filteredJoins === true ? self.filteredJoins() : self.Joins),
+			function (x) {
+				return {
+					DataConnectionId: x.DataConnectionId,
+					Id: x.Id ? x.Id : x.RelationId,
+					TableId: x.TableId,
+					TableName: x.JoinTable ? x.JoinTable.DisplayName : null,
+					JoinedTableId: x.JoinedTableId,
+					JoinedTableName: x.OtherTable ? x.OtherTable.DisplayName : null,
+					JoinType: x.JoinType,
+					FieldName: x.FieldName,
+					JoinFieldName: x.JoinFieldName,
+					JoinOrder: x.JoinOrder || 0
+				};
+			}
+		);
+	};
+
+	self.ExportJoins = function () {
+		var joinsToSave = self.getJoinsToSave(true);
+		var message = joinsToSave.length < self.Joins().length
+			? "Only filtered joins will be exported.\nDo you want to continue?"
+			: "No filters applied. All joins will be exported.\nDo you want to continue?";
+
+		bootbox.confirm({
+			title: "Confirm Export",
+			message: message,
+			buttons: {
+				cancel: {
+					label: 'Cancel',
+					className: 'btn-secondary'
+				},
+				confirm: {
+					label: 'Export',
+					className: 'btn-primary'
+				}
+			},
+			callback: function (result) {
+				if (result) {
+					var exportJson = JSON.stringify(joinsToSave, null, 2);
+					downloadJson(exportJson, 'Relations.json', 'application/json');
+				}
+			}
+		});
+	};
+
+	self.SaveJoins = function () {
+		var joinsToSave = self.getJoinsToSave(false);
+
+		ajaxcall({
+			url: options.apiUrl,
+			type: 'POST',
+			data: JSON.stringify({
+				method: options.saveRelationsUrl,
+				model: JSON.stringify({
+					account: self.keys.AccountApiKey,
+					dataConnect: self.keys.DatabaseApiKey,
+					relations: joinsToSave
+				})
+			})
+		}).done(function (result) {
+			self.isDirty(false);
+			if (result == "Success") toastr.success("Changes saved successfully.");
+		});
+	};
+
+
+	self.saveChanges = function (customOnly) {
+
+		var tablesToSave = $.map(self.Tables.model(), function (x) {
+			if (x.Selected() && (customOnly ? x.CustomTable() === true : x.CustomTable() === false)) {
+				return x;
+			}
+		});
+
+		if (tablesToSave.length == 0) {
+			toastr.error("Please choose some tables and columns");
+			return;
+		}
+
+		bootbox.confirm("Are you sure you would like to save the " + tablesToSave.length + " selected Table(s)?<br><b>Note: </b>This will make changes to your account that cannot be undone.", function (r) {
+			if (r) {
+				var savedNames = [];
+				_.forEach(tablesToSave, function (e) {
+					e.saveTable(self.keys.AccountApiKey, self.keys.DatabaseApiKey, true);
+					savedNames.push(e.TableName());
+				});
+
+				toastr.success("Saved Tables:<br>" + savedNames.map(n => "- " + n).join("<br>"), "Tables Saved");
+			}
+		});
+
+	}
+
+	self.download = function (content, fileName, contentType) {
+		var a = document.createElement("a");
+		var file = new Blob([content], { type: contentType });
+		a.href = URL.createObjectURL(file);
+		a.download = fileName;
+		a.click();
+	}
+
+	self.exportAll = function () {
+		var tablesToSave = $.map(self.Tables.model(), function (x) {
+			if (x.Selected()) {
+				return ko.mapping.toJS(x, {
+					'ignore': ["saveTable", "JoinTable"]
+				})
+			}
+		});
+
+		var joinsTosave = self.getJoinsToSave(false);
+
+		var exportJson = JSON.stringify({
+			tables: tablesToSave,
+			joins: joinsTosave
+		});
+
+		var connection = _.filter(self.DataConnections(), function (i, e) { return e.DataConnectGuid == self.currentConnectionKey(); });
+		self.download(exportJson, (connection.length > 0 ? connection[0].DataConnectName : 'dotnet-dataconnection-export') + '.json', 'text/plain');
+	}
+
+	self.importingFile = ko.observable(false);
+	self.importCancel = function () {
+		self.importingFile(false);
+	}
+	self.importFile = function (file) {
+		var reader = new FileReader();
+		reader.onload = function (event) {
+			var importedData = JSON.parse(event.target.result);
+			_.forEach(importedData.tables, function (e) {
+				var tableMatch = _.filter(self.Tables.model(), function (x) {
+					return x.TableName() && x.TableName().toLowerCase() == e.TableName.toLowerCase();
+				});
+				if (tableMatch.length > 0) {
+					var match = tableMatch[0];
+				} else {
+
+				}
+			});
+			$('#import-file').val("");
+		};
+		reader.readAsText(file);
+		self.importingFile(false);
+	}
+
+	function clearFileInput(target) {
+		self.ManageTablesJsonFile.file(null);
+		self.ManageTablesJsonFile.fileName('');
+		document.getElementById(target).value = '';
+	}
+
+	self.ManageTablesJsonFile = {
+		file: ko.observable(null),
+		fileName: ko.observable(''),
+		triggerTablesFileInput: function () {
+			$('#tablesFileInputJson').click();
+		},
+		handleTablesFileSelect: function (data, event) {
+			const selectedFile = event.target.files[0];
+			if (selectedFile && (selectedFile.type === "application/json" || selectedFile.name.endsWith('.json'))) {
+				self.ManageTablesJsonFile.file(selectedFile);
+				self.ManageTablesJsonFile.fileName(selectedFile.name);
+			} else {
+				toastr.error('Only JSON files are allowed.');
+				clearFileInput('tablesFileInputJson');
+			}
+		},
+		uploadTablesFile: function () {
+			const file = self.ManageTablesJsonFile.file();
+			if (!file) {
+				toastr.error('No JSON file selected for upload.');
+				clearFileInput('tablesFileInputJson');
+				return;
+			}
+
+			const reader = new FileReader();
+			reader.onload = function (event) {
+				let parsed;
+				try {
+					parsed = JSON.parse(event.target.result);
+				} catch (e) {
+					toastr.error('Invalid JSON file: ' + e.message);
+					clearFileInput('tablesFileInputJson');
+					return;
+				}
+
+				const tables = Array.isArray(parsed) ? parsed : [parsed];
+
+				self.refreshAll().done(function () {
+					const succeeded = [];
+					const failed = [];
+					const skipped = [];
+
+					const finishImport = () => {
+						self.refreshAll();
+						$('#uploadTablesFileModal').modal('hide');
+						clearFileInput('tablesFileInputJson');
+						if (failed.length) {
+							toastr.warning('Imported ' + succeeded.length + ', failed ' + failed.length + ': ' + failed.join(', '));
+						} else {
+							toastr.success('Imported ' + succeeded.length + ' tables successfully' + (skipped.length ? ' (skipped ' + skipped.length + ')' : '') + '.');
+						}
+					};
+
+					const processNext = (index) => {
+						if (index >= tables.length) {
+							finishImport();
+							return;
+						}
+
+						const table = tables[index];
+						const tableName = table.TableName;
+
+						if (Array.isArray(table.Columns)) {
+							table.Columns.forEach(c => { c.Id = 0; });
+						}
+
+						table.Selected = true;
+						const anySelected = _.some(table.Columns, c => c.Selected === true);
+						if (!anySelected && Array.isArray(table.Columns)) {
+							table.Columns.forEach(c => { c.Selected = true; });
+						}
+
+						const existingTable = _.find(self.Tables.model(), t => t.TableName() === tableName);
+
+						const processAndSave = (existingId) => {
+							table.Id = existingId || 0;
+							const mapped = ko.mapping.fromJS(table);
+							self.Tables.model.push(self.Tables.processTable(mapped));
+							const newTable = self.Tables.model()[self.Tables.model().length - 1];
+
+							newTable.saveTable(self.keys.AccountApiKey, self.keys.DatabaseApiKey, true)
+								.then(success => {
+									if (success) {
+										succeeded.push(tableName);
+									} else {
+										failed.push(tableName);
+										self.Tables.model.remove(newTable);
+									}
+									processNext(index + 1);
+								})
+								.catch(() => {
+									failed.push(tableName);
+									self.Tables.model.remove(newTable);
+									processNext(index + 1);
+								});
+						};
+
+						if (existingTable) {
+							handleOverwriteConfirmation(tableName, function (action) {
+								if (action === 'overwrite') {
+									const existingId = existingTable.Id();
+									self.Tables.model.remove(existingTable);
+									processAndSave(existingId);
+								} else {
+									skipped.push(tableName);
+									processNext(index + 1);
+								}
+							});
+						} else {
+							processAndSave(0);
+						}
+					};
+
+					processNext(0);
+				}).fail(function () {
+					toastr.error('Failed to load current tables. Please try again.');
+					clearFileInput('tablesFileInputJson');
+				});
+			};
+			reader.onerror = function () {
+				toastr.error('Error reading file.');
+				clearFileInput('tablesFileInputJson');
+			};
+			reader.readAsText(file);
+
+			function handleOverwriteConfirmation(tableName, callback) {
+				bootbox.dialog({
+					title: "Confirm Action",
+					message: `A table/view with the name "${tableName}" already exists. What would you like to do?`,
+					buttons: {
+						cancel: {
+							label: 'Skip',
+							className: 'btn-secondary',
+							callback: () => callback('cancel')
+						},
+						overwrite: {
+							label: 'Overwrite',
+							className: 'btn-primary',
+							callback: () => callback('overwrite')
+						}
+					}
+				});
+			}
+		}
+	};
+
+	self.ManageJoinsJsonFile = {
+		file: ko.observable(null),
+		fileName: ko.observable(''),
+		triggerJoinsFileInput: function () {
+			$('#joinsFileInputJson').click();
+		},
+		handleJoinsFileSelect: function (data, event) {
+			const selectedFile = event.target.files[0];
+			if (selectedFile && (selectedFile.type === "application/json" || selectedFile.name.endsWith('.json'))) {
+				self.ManageJoinsJsonFile.file(selectedFile);
+				self.ManageJoinsJsonFile.fileName(selectedFile.name);
+			} else {
+				toastr.error('Only JSON files are allowed.');
+				clearFileInput('joinsFileInputJson');
+			}
+		},
+		uploadJoinsFile: function () {
+			const file = self.ManageJoinsJsonFile.file();
+			if (!file) {
+				toastr.error('No JSON file selected for upload.');
+				clearFileInput('joinsFileInputJson');
+				return;
+			}
+			let addedJoins = [];
+			const reader = new FileReader();
+			reader.onload = function (event) {
+				try {
+					const joins = JSON.parse(event.target.result);
+					const allTables = self.Tables.model();
+
+					const getTableByName = name =>
+						allTables.find(t =>
+							ko.unwrap(t.DisplayName) === name ||
+							ko.unwrap(t.TableName) === name
+						);
+
+					joins.forEach(newItem => {
+
+						// Always resolve table by NAME (ignore incoming Id)
+						let table = getTableByName(newItem.TableName);
+						let joinedTable = getTableByName(newItem.JoinedTableName);
+
+						if (!table || !joinedTable) {
+							toastr.warning(`Skipping join: table not found (${newItem.TableName} or ${newItem.JoinedTableName})`);
+							return;
+						}
+
+						// Assign correct IDs from current schema
+						newItem.TableId = ko.unwrap(table.Id);
+						newItem.JoinedTableId = ko.unwrap(joinedTable.Id);
+
+						// Check existing join by table + fields (NOT Id)
+						let existingItem = self.Joins().find(item =>
+							item.JoinTable().DisplayName() === newItem.TableName &&
+							item.OtherTable().DisplayName() === newItem.JoinedTableName &&
+							item.JoinFieldName() === newItem.JoinFieldName &&
+							item.FieldName() === newItem.FieldName
+						);
+
+						if (existingItem) {
+							if (newItem.JoinType) existingItem.JoinType(newItem.JoinType);
+							if (newItem.Alias) existingItem.Alias(newItem.Alias);
+							if (newItem.Relationship) existingItem.Relationship(newItem.Relationship);
+
+							existingItem.isNew = true;
+						} else {
+							const added = self.setupJoin(newItem);
+							added.isNew = true;
+							self.Joins.push(added);
+							addedJoins.push(added);
+						}
+					});
+
+					self.isDirty(true);
+					toastr.success('Joins imported in view. Please click "Save Joins" to apply.');
+					$('#uploadJoinsFileModal').modal('hide');
+					clearFileInput('joinsFileInputJson');
+
+				} catch (e) {
+					toastr.error('Invalid JSON file: ' + e.message);
+					clearFileInput('joinsFileInputJson');
+				}
+			};
+			reader.onerror = function () {
+				toastr.error('Error reading file.');
+				clearFileInput('joinsFileInputJson');
+			};
+			reader.readAsText(file);
+		}
+	};
+
+	self.ManageStoredProceduresJsonFile = {
+		file: ko.observable(null),
+		fileName: ko.observable(''),
+		triggerStoredProceduresFileInput: function () {
+			$('#storedProceduresFileInputJson').click();
+		},
+		handleStoredProceduresFileSelect: function (data, event) {
+			var selectedFile = event.target.files[0];
+			if (selectedFile && (selectedFile.type === "application/json" || selectedFile.name.endsWith('.json'))) {
+				self.ManageStoredProceduresJsonFile.file(selectedFile);
+				self.ManageStoredProceduresJsonFile.fileName(selectedFile.name);
+			} else {
+				self.ManageStoredProceduresJsonFile.file(null);
+				self.ManageStoredProceduresJsonFile.fileName('');
+				toastr.error('Only JSON files are allowed.');
+			}
+		},
+		uploadStoredProceduresFile: function () {
+			var file = self.ManageStoredProceduresJsonFile.file();
+			if (file != null) {
+				var reader = new FileReader();
+				reader.onload = function (event) {
+					try {
+						var Procedure = JSON.parse(event.target.result);
+						var procName = Procedure.TableName;
+						var procId = Procedure.Id;
+						var procMatch = _.some(self.Procedures.savedProcedures(), function (e) {
+							return e.TableName() === procName || e.Id() === procId;
+						});
+						if (procMatch) {
+							handleOverwriteConfirmation(procName, function (action) {
+								if (action === 'overwrite') {
+									self.saveProcedure(procName, true, Procedure)
+								} else {
+									toastr.info('Upload canceled.');
+								}
+							});
+							$('#uploadStoredProceduresFileModal').modal('hide');
+						}
+						else {
+							Procedure.Id = 0;
+							if (Array.isArray(Procedure.Columns)) {
+								_.forEach(Procedure.Columns, function (col) { col.Id = 0; })
+							}
+							if (Array.isArray(Procedure.Parameters)) {
+								_.forEach(Procedure.Parameters, function (param) { param.Id = 0; })
+							}
+							self.saveProcedure(procName, true, Procedure)
+							$('#uploadStoredProceduresFileModal').modal('hide');
+						}
+						// Reset the file input and file name
+						self.ManageStoredProceduresJsonFile.file(null);
+						self.ManageStoredProceduresJsonFile.fileName('');
+					} catch (e) {
+						toastr.error('Invalid JSON file: ' + e.message);
+					}
+				};
+				reader.onerror = function (event) {
+					toastr.error('Error reading file.');
+				};
+				reader.readAsText(file);
+				function handleOverwriteConfirmation(storedProcedure, callback) {
+					bootbox.dialog({
+						title: "Confirm Action",
+						message: `A Stored Procedures Json with the name "${storedProcedure}" already exists. What would you like to do?`,
+						buttons: {
+							cancel: {
+								label: 'Skip',
+								className: 'btn-secondary',
+								callback: function () {
+									callback('cancel');
+								}
+							},
+							overwrite: {
+								label: 'Overwrite',
+								className: 'btn-primary',
+								callback: function () {
+									callback('overwrite');
+								}
+							}
+						}
+					});
+				}
+			} else {
+				toastr.error('No JSON file selected for upload.');
+			}
+		}
+	};
+
+	self.importStart = function () {
+		self.importingFile(true);
+	}
+
+	self.manageAccess = {};
+	self.reportsAndFolders = ko.observableArray([]);
+	self.Folders = ko.observableArray([]);
+
+	self.userSettingsData = {};
+
+	self.setupManageAccess = function () {
+
+		ajaxcall({ url: options.getUsersAndRoles }).done(function (data) {
+			if (data.d) data = data.d;
+			self.allRoles(data.userRoles)
+			self.userSettingsData = data;
+			self.manageAccess = manageAccess(data);
+		});
+
+
+		self.loadReportsAndFolder();
+	}
+
+	self.loadReportsAndFolder = function () {
+
+		var getReports = function () {
+			return ajaxcall({
+				type: 'POST',
+				url: options.apiUrl,
+				data: JSON.stringify({
+					method: "/ReportApi/GetSavedReports",
+					model: JSON.stringify({
+						account: self.keys.AccountApiKey,
+						dataConnect: self.keys.DatabaseApiKey,
+						adminMode: true
+					})
+				})
+			});
+		};
+
+		var getFolders = function () {
+			return ajaxcall({
+				type: 'POST',
+				url: options.apiUrl,
+				data: JSON.stringify({
+					method: "/ReportApi/GetFolders",
+					model: JSON.stringify({
+						account: self.keys.AccountApiKey,
+						dataConnect: self.keys.DatabaseApiKey,
+						adminMode: true
+					})
+				})
+			});
+		};
+
+		return $.when(getReports(), getFolders()).done(function (allReports, allFolders) {
+			var setup = [];
+			if (allFolders[0].d) { allFolders[0] = allFolders[0].d; }
+			if (allReports[0].d) { allReports[0] = allReports[0].d; }
+
+			// Full folder path so sub folders nest and same named folders stay distinguishable.
+			var folderMap = {};
+			_.forEach(allFolders[0], function (f) { folderMap[f.Id] = f; });
+			var pathNames = function (f) {
+				var names = [], cur = f, guard = 0;
+				while (cur && guard++ < 20) {
+					names.unshift(cur.FolderName);
+					cur = cur.ParentFolderId ? folderMap[cur.ParentFolderId] : null;
+				}
+				return names;
+			};
+
+			_.forEach(allFolders[0], function (x) {
+				var folderReports = _.filter(allReports[0], { folderId: x.Id });
+				_.forEach(folderReports, function (r) {
+					r.userId = ko.observable(r.userId);
+					r.viewOnlyUserId = ko.observable(r.viewOnlyUserId);
+					r.deleteOnlyUserId = ko.observable(r.deleteOnlyUserId);
+					r.userRole = ko.observable(r.userRole);
+					r.viewOnlyUserRole = ko.observable(r.viewOnlyUserRole);
+					r.deleteOnlyUserRole = ko.observable(r.deleteOnlyUserRole);
+					r.clientId = ko.observable(r.clientId);
+					r.changeAccess = ko.observable(false);
+					r.changeAccess.subscribe(function (x) {
+						if (x) {
+							_.forEach(folderReports, function (f) {
+								if (f !== r) {
+									f.changeAccess(false);
+								}
+							});
+							self.manageAccess.clientId(r.clientId());
+							self.manageAccess.setupList(self.manageAccess.users, r.userId() || '');
+							self.manageAccess.setupList(self.manageAccess.userRoles, r.userRole() || '');
+							self.manageAccess.setupList(self.manageAccess.viewOnlyUserRoles, r.viewOnlyUserRole() || '');
+							self.manageAccess.setupList(self.manageAccess.viewOnlyUsers, r.viewOnlyUserId() || '');
+							self.manageAccess.setupList(self.manageAccess.deleteOnlyUserRoles, r.deleteOnlyUserRole() || '');
+							self.manageAccess.setupList(self.manageAccess.deleteOnlyUsers, r.deleteOnlyUserId() || '');
+						}
+					});
+
+					r.saveAccessChanges = function () {
+						return ajaxcall({
+							url: options.apiUrl,
+							type: "POST",
+							data: JSON.stringify({
+								method: "/ReportApi/SaveReportAccess",
+								model: JSON.stringify({
+									account: self.keys.AccountApiKey,
+									dataConnect: self.keys.DatabaseApiKey,
+									reportJson: JSON.stringify({
+										Id: r.reportId,
+										ClientId: self.manageAccess.clientId(),
+										UserId: self.manageAccess.getAsList(self.manageAccess.users),
+										ViewOnlyUserId: self.manageAccess.getAsList(self.manageAccess.viewOnlyUsers),
+										DeleteOnlyUserId: self.manageAccess.getAsList(self.manageAccess.deleteOnlyUsers),
+										UserRoles: self.manageAccess.getAsList(self.manageAccess.userRoles),
+										ViewOnlyUserRoles: self.manageAccess.getAsList(self.manageAccess.viewOnlyUserRoles),
+										DeleteOnlyUserRoles: self.manageAccess.getAsList(self.manageAccess.deleteOnlyUserRoles)
+									})
+								})
+							})
+						}).done(function (d) {
+							if (d.d) d = d.d;
+							toastr.success('Changes Saved Successfully');							
+							r.changeAccess(false);
+							r.userId(self.manageAccess.getAsList(self.manageAccess.users));
+							r.viewOnlyUserId(self.manageAccess.getAsList(self.manageAccess.viewOnlyUsers));
+							r.deleteOnlyUserId(self.manageAccess.getAsList(self.manageAccess.deleteOnlyUsers));
+							r.userRole(self.manageAccess.getAsList(self.manageAccess.userRoles));
+							r.viewOnlyUserRole(self.manageAccess.getAsList(self.manageAccess.viewOnlyUserRoles));
+							r.deleteOnlyUserRole(self.manageAccess.getAsList(self.manageAccess.deleteOnlyUserRoles));
+							r.clientId(self.manageAccess.clientId());
+							//self.loadReportsAndFolder();
+						});
+
+					}
+					r.isSelected = ko.observable(false);
+				});
+				var names = pathNames(x);
+				var folderVm = {
+					folderId: x.Id,
+					folder: names[names.length - 1],
+					folderPath: names.join(' › '),
+					depth: names.length - 1,
+					reports: folderReports,
+					allReportsSelected: ko.observable(),
+					selectAllReports: function () {
+						_.forEach(folderReports, function (rep) {
+							rep.isSelected(true);
+						});
+					},
+					deselectAllReports: function () {
+						_.forEach(folderReports, function (rep) {
+							rep.isSelected(false);
+						});
+					}
+				};
+				folderVm.allReportsSelected.subscribe(function (value) {
+					if (value) {
+						folderVm.selectAllReports();
+					} else {
+						folderVm.deselectAllReports();
+					}
+				});
+				setup.push(folderVm);
+			});
+
+			self.reportsAndFolders(_.sortBy(setup, 'folderPath'));
+			var folders = _.sortBy(allFolders[0], function (f) { return pathNames(f).join(' › '); });
+			_.forEach(folders, function (f) {
+				var n = pathNames(f);
+				f.FolderPath = n.join(' › ');
+				f.Depth = n.length - 1;
+			});
+			_.forEach(folders, function (r) {
+				r.UserId = ko.observable(r.UserId);
+				r.ViewOnlyUserId = ko.observable(r.ViewOnlyUserId);
+				r.DeleteOnlyUserId = ko.observable(r.DeleteOnlyUserId);
+				r.UserRoles = ko.observable(r.UserRoles);
+				r.ViewOnlyUserRoles = ko.observable(r.ViewOnlyUserRoles);
+				r.DeleteOnlyUserRoles = ko.observable(r.DeleteOnlyUserRoles);
+				r.ClientId = ko.observable(r.ClientId);
+				r.changeFolderAccess = ko.observable(false);
+				r.changeFolderAccess.subscribe(function (x) {
+					if (x) {
+						_.forEach(folders, function (f) {
+							if (f !== r) {
+								f.changeFolderAccess(false);
+							}
+						});
+						self.manageAccess.clientId(r.ClientId());
+						self.manageAccess.setupList(self.manageAccess.users, r.UserId() || '');
+						self.manageAccess.setupList(self.manageAccess.userRoles, r.UserRoles() || '');
+						self.manageAccess.setupList(self.manageAccess.viewOnlyUserRoles, r.ViewOnlyUserRoles() || '');
+						self.manageAccess.setupList(self.manageAccess.viewOnlyUsers, r.ViewOnlyUserId() || '');
+						self.manageAccess.setupList(self.manageAccess.deleteOnlyUserRoles, r.DeleteOnlyUserRoles() || '');
+						self.manageAccess.setupList(self.manageAccess.deleteOnlyUsers, r.DeleteOnlyUserId() || '');
+					}
+				});
+				r.saveFolderAccessChanges = function () {
+					return ajaxcall({
+						url: options.reportsApiUrl,
+						data: {
+							method: "/ReportApi/SaveFolderData",
+							model: JSON.stringify({
+								folderData: JSON.stringify({
+									Id: r.Id,
+									FolderName: r.FolderName,
+									UserId: self.manageAccess.getAsList(self.manageAccess.users),
+									ViewOnlyUserId: self.manageAccess.getAsList(self.manageAccess.viewOnlyUsers),
+									DeleteOnlyUserId: self.manageAccess.getAsList(self.manageAccess.deleteOnlyUsers),
+									UserRoles: self.manageAccess.getAsList(self.manageAccess.userRoles),
+									ViewOnlyUserRoles: self.manageAccess.getAsList(self.manageAccess.viewOnlyUserRoles),
+									DeleteOnlyUserRoles: self.manageAccess.getAsList(self.manageAccess.deleteOnlyUserRoles),
+									ClientId: self.manageAccess.clientId(),
+								}),
+								adminMode: true
+							})
+						}
+					}).done(function (d) {
+						if (d.d) d = d.d;
+						toastr.success('Changes Saved Successfully');
+						r.UserId(self.manageAccess.getAsList(self.manageAccess.users));
+						r.ViewOnlyUserId(self.manageAccess.getAsList(self.manageAccess.viewOnlyUsers));
+						r.DeleteOnlyUserId(self.manageAccess.getAsList(self.manageAccess.deleteOnlyUsers));
+						r.UserRoles(self.manageAccess.getAsList(self.manageAccess.userRoles));
+						r.ViewOnlyUserRoles(self.manageAccess.getAsList(self.manageAccess.viewOnlyUserRoles));
+						r.DeleteOnlyUserRoles(self.manageAccess.getAsList(self.manageAccess.deleteOnlyUserRoles));
+						r.ClientId(self.manageAccess.clientId());
+						r.changeFolderAccess(false);
+						//self.loadReportsAndFolder();
+					});
+
+				}
+				r.isSelected = ko.observable(false);
+			});
+			self.Folders(folders);
+		});
+	}
+	self.searchQuery = ko.observable("");
+	self.filteredReportsAndFolders = ko.computed(function () {
+		const query = (self.searchQuery() || "").toLowerCase();
+		return ko.utils.arrayMap(self.reportsAndFolders(), function (folder) {
+			let filteredReports = ko.utils.arrayFilter(folder.reports, function (r) {
+				const reportName = (r.reportName || "").toLowerCase();
+				const reportDescription = (r.reportDescription || "").toLowerCase();
+				return (
+					reportName.includes(query) ||
+					reportDescription.includes(query)
+				);
+			});
+			if (!query) {
+				filteredReports = folder.reports;
+			}
+			return {
+				folderId: folder.folderId,
+				folder: folder.folder,
+				reports: filteredReports,
+				hasMatch: filteredReports.length > 0,
+				allReportsSelected: folder.allReportsSelected
+			};
+		});
+	});
+	self.anyReportSelected = ko.computed(function () {
+		var folders = ko.unwrap(self.reportsAndFolders);
+		for (var i = 0; i < folders.length; i++) {
+			var reports = ko.unwrap(folders[i].reports);
+			for (var j = 0; j < reports.length; j++) {
+				if (ko.unwrap(reports[j].isSelected)) {
+					return true;
+				}
+			}
+		}
+		return false;
+	});
+	self.openApplySecurityModal = function () {
+		const selected = [];
+		self.reportsAndFolders().forEach(folder => {
+			if (folder.isSelected && folder.isSelected()) {
+				selected.push(folder);
+			}
+			folder.reports.forEach(r => {
+				if (r.isSelected && r.isSelected()) {
+					selected.push(r);
+				}
+			});
+		});
+		if (selected.length === 0) {
+			toastr.error("No reports or folders selected!");
+			return;
+		}
+		self.selectedForSecurity = selected;
+		const modal = new bootstrap.Modal(document.getElementById("applySecurityModal"));
+		modal.show();
+	};
+	self.applySecurityToAll = function () {
+		if (!self.selectedForSecurity || self.selectedForSecurity.length === 0) {
+			toastr.error("No items selected to apply security!");
+			return;
+		}
+		bootbox.confirm("Warning: This will update access for ALL selected reports. Are you sure you want to continue?", function (result) {
+			if (result) {
+				self.selectedForSecurity.forEach(r => {
+					r.userId(self.manageAccess.getAsList(self.manageAccess.users));
+					r.viewOnlyUserId(self.manageAccess.getAsList(self.manageAccess.viewOnlyUsers));
+					r.deleteOnlyUserId(self.manageAccess.getAsList(self.manageAccess.deleteOnlyUsers));
+					r.userRole(self.manageAccess.getAsList(self.manageAccess.userRoles));
+					r.viewOnlyUserRole(self.manageAccess.getAsList(self.manageAccess.viewOnlyUserRoles));
+					r.deleteOnlyUserRole(self.manageAccess.getAsList(self.manageAccess.deleteOnlyUserRoles));
+					r.clientId(self.manageAccess.clientId());
+					r.saveAccessChanges();
+				});
+				toastr.success("Security applied to all selected items!");
+			}
+		});
+	};
+	self.selectAllFiltered = function () {
+		self.filteredReportsAndFolders().forEach(folder => {
+			folder.reports.forEach(r => r.isSelected(true));
+		});
+	};
+	self.deselectAllFiltered = function () {
+		self.filteredReportsAndFolders().forEach(folder => {
+			folder.reports.forEach(r => r.isSelected(false));
+		});
+	};
+	self.exportFolderReportsManageAccessJson = function (folderId) {
+		const FolderReportsJson = self.reportsAndFolders().filter(filter => filter.folderId === folderId) 
+		const plainJson = ko.mapping.toJS(FolderReportsJson, {
+			ignore: ["changeAccess", "isSelected"]
+		})
+		const exportJson = JSON.stringify(plainJson, null, 2);
+		downloadJson(exportJson, `FolderReportsManageAccess_${FolderReportsJson[0].folder}.json` , 'application/json');
+	};
+	self.exportFolderManageAccessJson = function (folderId) {
+		const FolderJson = self.Folders().filter(filter => filter.Id === folderId)
+		const plainJson = ko.mapping.toJS(FolderJson, {
+			ignore: ["changeAccess", "isSelected"]
+		})
+		const exportJson = JSON.stringify(plainJson, null, 2);
+		downloadJson(exportJson, `FolderManageAccess_${FolderJson[0].FolderName}.json`, 'application/json');
+	};
+	self.exportFoldersReportJson = async function () {
+		const selectedReports = [];
+
+		const allReports = _.flatMap(self.reportsAndFolders(), function (folder) {
+			return _.map(folder.reports, function (r) {
+				return {
+					reportId: r.reportId,
+					reportName: r.reportName
+				};
+			});
+		});
+
+		await Promise.all(_.map(self.reportsAndFolders(), async function (folder) {
+			const selectedInFolder = _.filter(folder.reports, function (r) {
+				return r.isSelected && r.isSelected();
+			});
+
+			await Promise.all(_.map(selectedInFolder, async function (r) {
+				try {
+					const reportview = new reportViewModel({
+						apiUrl: options.reportsApiUrl,
+						runReportApiUrl: options.runReportApiUrl,
+						reportWizard: options.reportWizard,
+						lookupListUrl: options.lookupListUrl,
+						userSettings: { currentUserId: options.currentUserId },
+						savedReports: allReports
+					});
+					reportview.adminMode(true);
+
+					const response = await reportview.LoadReport(r.reportId, true, '', true, false);
+					const reportData = response && response.UseStoredProc === false
+						? reportview.BuildReportData()
+						: (await reportview.loadProcs(), reportview.BuildReportData());
+
+					selectedReports.push({
+						reportId: r.reportId,
+						reportName: r.reportName,
+						folder: folder.folder,
+						data: reportData
+					});
+				} catch (err) {
+					console.error(`Error exporting report ${r.reportName}:`, err);
+					toastr.error(`Error exporting report: ${r.reportName}`);
+				}
+			}));
+		}));
+
+		if (selectedReports.length === 0) {
+			toastr.error("No Reports selected!");
+			return;
+		}
+
+		const exportJson = JSON.stringify(selectedReports, null, 2);
+		downloadJson(exportJson, `SelectedReports.json`, 'application/json');
+	};
+	self.deleteSelectedItems = function () {
+		const selectedFolders = [];
+		const selectedReports = [];
+
+		self.reportsAndFolders().forEach(folder => {
+			if (folder.allReportsSelected() && folder.folderId > 0) {
+				selectedFolders.push(folder);
+			} else {
+				folder.reports.forEach(r => {
+					if (r.isSelected && r.isSelected()) {
+						selectedReports.push({ folder: folder, report: r });
+					}
+				});
+			}
+		});
+
+		if (selectedFolders.length === 0 && selectedReports.length === 0) {
+			toastr.error("No folders or reports selected to delete!");
+			return;
+		}
+
+		// Build a more descriptive confirmation message
+		let message = `<div style="max-height:300px; overflow:auto;">`;
+		message += `<p class="fw-bold">This action will permanently delete the following items and <u>cannot be undone</u>:</p>`;
+
+		if (selectedFolders.length > 0) {
+			message += `<p><strong>Folders to delete (Deleting folders will delete all the reports in the folder as well):</strong></p><ul>`;
+			selectedFolders.forEach(f => {
+				message += `<li><span class="fa fa-folder text-warning"></span> ${f.folder}</li>`;
+			});
+			message += `</ul>`;
+		}
+
+		const reportsNotInDeletedFolders = selectedReports.filter(item => {
+			return !selectedFolders.some(f => f.folderId === item.folder.folderId);
+		});
+
+		if (reportsNotInDeletedFolders.length > 0) {
+			message += `<p><strong>Reports to delete (${reportsNotInDeletedFolders.length}):</strong></p><ul>`;
+			reportsNotInDeletedFolders.forEach(item => {
+				message += `<li><span class="fa fa-file text-secondary"></span> ${item.report.reportName} <span class="text-muted small">(in folder: ${item.folder.folder})</span></li>`;
+			});
+			message += `</ul>`;
+		}
+
+		message += `<p class="text-danger fw-bold mb-0">Are you absolutely sure you want to proceed?</p></div>`;
+
+		bootbox.dialog({
+			title: "Confirm Delete",
+			message: message,
+			size: 'medium',
+			buttons: {
+				cancel: {
+					label: 'Cancel',
+					className: 'btn-secondary'
+				},
+				confirm: {
+					label: 'Delete Permanently',
+					className: 'btn-danger',
+					callback: function () {
+						const deletePromises = [];
+
+						// Delete folders first
+						selectedFolders.forEach(folder => {
+							deletePromises.push(
+								ajaxcall({
+									url: options.reportsApiUrl,
+									data: {
+										method: "/ReportApi/DeleteFolder",
+										model: JSON.stringify({ folderId: folder.folderId, adminMode: true })
+									}
+								})
+							);
+						});
+
+						reportsNotInDeletedFolders.forEach(item => {
+							deletePromises.push(
+								ajaxcall({
+									url: options.reportsApiUrl,
+									data: {
+										method: "/ReportApi/DeleteReport",
+										model: JSON.stringify({ reportId: item.report.reportId, adminMode: true })
+									}
+								})
+							);
+						});
+
+						$.when.apply($, deletePromises).done(function () {
+							self.loadReportsAndFolder().done(function () {
+								toastr.success("Selected folders and reports have been permanently deleted.");
+							});
+						});
+					}
+				}
+			}
+		});
+	};
+	self.ManageJsonFile = {
+		file: ko.observable(null),
+		fileName: ko.observable(''),
+		triggerFileInput: function () {
+			$('#fileInputJson').click();
+		},
+		handleFileSelect: function (data, event) {
+			var selectedFile = event.target.files[0];
+			if (selectedFile && (selectedFile.type === "application/json" || selectedFile.name.endsWith('.json'))) {
+				self.ManageJsonFile.file(selectedFile);
+				self.ManageJsonFile.fileName(selectedFile.name);
+			} else {
+				self.ManageJsonFile.file(null);
+				self.ManageJsonFile.fileName('');
+				toastr.error('Only JSON files are allowed.');
+			}
+		},
+
+		uploadFile: function () {
+			var file = self.ManageJsonFile.file();
+			if (!file) {
+				toastr.error('No JSON file selected for upload.');
+				return;
+			}
+
+			var reader = new FileReader();
+			reader.onload = function (event) {
+				try {
+					const parsed = JSON.parse(event.target.result);
+					const reports = Array.isArray(parsed) ? parsed : [parsed];
+
+					if (!reports || reports.length === 0) {
+						toastr.error("No valid reports found in the uploaded file.");
+						return;
+					}
+
+					function handleOverwriteConfirmation(reportName, callback) {
+						bootbox.dialog({
+							title: "Confirm Action",
+							message: `A report with the name "${reportName}" already exists. What would you like to do?`,
+							buttons: {
+								cancel: {
+									label: 'Skip',
+									className: 'btn-secondary',
+									callback: function () { callback('cancel'); }
+								},
+								duplicate: {
+									label: 'Make Copy',
+									className: 'btn-warning',
+									callback: function () { callback('duplicate'); }
+								},
+								overwrite: {
+									label: 'Overwrite',
+									className: 'btn-primary',
+									callback: function () { callback('overwrite'); }
+								}
+							}
+						});
+					}
+
+					const distinctFolders = _.uniq(_.map(reports, function (r) {
+						return r.folder || "Imported Reports";
+					}));
+
+					const folderPromises = [];
+
+					distinctFolders.forEach(function (folderName) {
+						let existingFolder = _.find(self.reportsAndFolders(), function (f) {
+							return f.folder === folderName;
+						});
+
+						if (existingFolder) {
+							folderPromises.push(Promise.resolve(existingFolder.folderId));
+						} else {
+							const p = ajaxcall({
+								url: options.reportsApiUrl,
+								data: {
+									method: "/ReportApi/SaveFolderData",
+									model: JSON.stringify({
+										folderData: JSON.stringify({
+											Id: 0,
+											FolderName: folderName
+										})
+									})
+								}
+							}).done(function (d) {
+								if (d.d) d = d.d;
+								var folderVm = {
+									folderId: d,
+									folder: folderName,
+									reports: [],
+									allReportsSelected: ko.observable(),
+									selectAllReports: function () {
+										_.forEach([], function (rep) { rep.isSelected(true); });
+									},
+									deselectAllReports: function () {
+										_.forEach([], function (rep) { rep.isSelected(false); });
+									}
+								};
+								self.reportsAndFolders.push(folderVm);
+								return d;
+							});
+							folderPromises.push(p);
+						}
+					});
+
+					$.when.apply($, folderPromises).done(function () {
+						const allPromises = [];
+
+						reports.forEach(function (report) {
+							const folderName = report.folder || "Imported Reports";
+							const matchFolder = _.find(self.reportsAndFolders(), f => f.folder === folderName);
+							if (!matchFolder) return;
+
+							const folderId = matchFolder.folderId;
+							const reportName = report.reportName;
+							const existingReport = _.find(matchFolder.reports, r => r.reportName === reportName);
+
+							const importReport = function (action) {
+								const reportview = new reportViewModel({
+									apiUrl: options.reportsApiUrl,
+									runReportApiUrl: options.runReportApiUrl,
+									reportWizard: options.reportWizard,
+									lookupListUrl: options.lookupListUrl,
+									getSchemaFromSql: options.getSchemaFromSql,
+									getTimeZonesUrl: options.getTimeZonesUrl,
+									userSettings: self.userSettingsData || { currentUserId: options.currentUserId },
+									dataFilters: (self.userSettingsData && self.userSettingsData.dataFilters) || {}
+								});
+								reportview.adminMode(true);
+								report.data = report.data || {};
+								report.data.FolderID = folderId;
+								report.data.checkFields = true;
+
+								if (existingReport && action === 'overwrite') {
+									report.data.ReportID = existingReport.reportId;
+								} else {
+									report.data.ReportID = 0;
+									if (action === 'duplicate') {
+										report.data.ReportName = reportName + " Copy";
+									}
+								}
+
+								return reportview.RunReport(true, true, false, report.data);
+							};
+
+							if (existingReport) {
+								const def = $.Deferred();
+								handleOverwriteConfirmation(reportName, function (action) {
+									if (action === 'cancel') def.resolve();
+									else importReport(action).done(() => def.resolve());
+								});
+								allPromises.push(def.promise());
+							} else {
+								allPromises.push(importReport());
+							}
+						});
+
+						$.when.apply($, allPromises).done(function () {
+							self.loadReportsAndFolder();
+						});
+					});
+
+					self.ManageJsonFile.file(null);
+					self.ManageJsonFile.fileName('');
+					$('#uploadFileModal').modal('hide');
+					$('#uploadFileModal input[type=file]').val('');
+
+				} catch (e) {
+					toastr.error('Invalid JSON file: ' + e.message);
+				}
+			};
+
+			reader.onerror = function () {
+				toastr.error('Error reading file.');
+			};
+
+			reader.readAsText(file);
+		}
+	};
+
+	self.exportFoldersJson = function () {
+		const selected = self.Folders().filter(f => f.isSelected());
+		if (selected.length === 0) {
+			toastr.error("No folders selected!");
+			return;
+		}
+		const plainJson = ko.mapping.toJS(selected, {
+			ignore: ["changeFolderAccess", "isSelected"]
+		})
+		const exportJson = JSON.stringify(plainJson, null, 2);
+		downloadJson(exportJson, `FolderManageAccess.json`, 'application/json');
+	};
+	self.selectAllFolders = function () {
+		_.forEach(self.Folders(), function (f) {
+			f.isSelected(true);
+		});
+	};
+	self.deselectAllFolders = function () {
+		_.forEach(self.Folders(), function (f) {
+			f.isSelected(false);
+		});
+	};
+	self.selectAllFolderReports = function () {
+		_.forEach(self.reportsAndFolders(), function (folder) {
+			_.forEach(folder.reports, function (rep) {
+				rep.isSelected(true);
+			});
+		});
+	};
+	self.deselectAllFolderReports = function () {
+		_.forEach(self.reportsAndFolders(), function (folder) {
+			_.forEach(folder.reports, function (rep) {
+				rep.isSelected(false);
+			});
+		});
+	};
+}
+var ColumnModel = function (data) {
+	var self = this;
+	data = data || {};
+
+	self.Id = ko.observable(data.Id || 0);
+	self.ColumnName = ko.observable(data.ColumnName || '');
+	self.DisplayName = ko.observable(data.DisplayName || '');
+	self.Selected = ko.observable(
+		data.Selected !== undefined ? data.Selected : true
+	);
+	self.DisplayOrder = ko.observable(data.DisplayOrder || 0);
+	self.FieldType = ko.observable(data.FieldType || 'Varchar');
+	self.PrimaryKey = ko.observable(data.PrimaryKey || false);
+	self.ForeignKey = ko.observable(data.ForeignKey || false);
+	self.AccountIdField = ko.observable(data.AccountIdField || false);
+	self.DoNotDisplay = ko.observable(data.DoNotDisplay || false);
+	self.ForeignTable = ko.observable(data.ForeignTable || null);
+	self.ForeignJoin = ko.observable(data.ForeignJoin || 'Inner');
+	self.ForeignKeyField = ko.observable(data.ForeignKeyField || null);
+	self.ForeignValueField = ko.observable(data.ForeignValueField || null);
+	self.ForeignFilterOnly = ko.observable(data.ForeignFilterOnly || false);
+	self.ForceFilter = ko.observable(data.ForceFilter || false);
+	self.ForceFilterForTable = ko.observable(data.ForceFilterForTable || false);
+	self.RestrictedDateRange = ko.observable(data.RestrictedDateRange || null);
+	self.RestrictedStartDate = ko.observable(data.RestrictedStartDate || null);
+	self.RestrictedEndDate = ko.observable(data.RestrictedEndDate || null);
+	self.AllowedRoles = ko.observableArray(data.AllowedRoles || []);
+	self.ForeignParentKey = ko.observable(data.ForeignParentKey || false);
+	self.ForeignParentTable = ko.observable(data.ForeignParentTable || null);
+	self.ForeignParentApplyTo = ko.observable(data.ForeignParentApplyTo || null);
+	self.ForeignParentKeyField = ko.observable(data.ForeignParentKeyField || null);
+	self.ForeignParentValueField = ko.observable(data.ForeignParentValueField || null);
+	self.ForeignParentRequired = ko.observable(data.ForeignParentRequired || false);
+	self.JsonStructure = ko.observable(data.JsonStructure || null);
+	self.isNew = ko.observable(self.Id() === 0);
+};
+
+var tablesViewModel = function (options, keys, previewData, activeTable) {
+	var self = this;
+	self.model = ko.mapping.fromJS(_.sortBy(options.model.Tables, ['TableName']));
+	
+	self.processTable = function (t) {
+		t.editTableColumn = ko.observable();
+		t.addNewColumn = function () {
+			var activetable = activeTable();
+			var newCol = new ColumnModel({
+				ColumnId: 0,
+				ColumnName: '',
+				DisplayName: '',
+				FieldType: 'Varchar'
+			});
+			ko.contextFor(document.getElementById('column-modal')).$data.selectColumn(newCol,false)
+			$('#column-modal').modal('show');
+		};
+		t.saveColumn = function () {
+			var col = t.editTableColumn();
+			var table = activeTable();
+			if (!col.ColumnName()) {
+				alert("Column Name is required");
+				return;
+			}
+			var duplicate = table.Columns().some(c =>
+				c.ColumnName().toLowerCase() === col.ColumnName().toLowerCase()
+			);
+			if (duplicate && col.isNew()) {
+				alert("Column already exists");
+				return;
+			}
+			if (col.isNew()) {
+				table.Columns.push(col);
+				col.isNew(false);
+			}
+			$('#column-modal').modal('hide');
+		};
+		t.availableColumns = ko.computed(function () {
+			const columns = [];
+
+			ko.utils.arrayForEach(t.Columns(), function (col) {
+				col.isNew = false;
+				if (col.Id() > 0 && col.Selected()) {
+					columns.push(col);
+				}
+
+				if (col.FieldType() === "Json" && col.Selected() && col.JsonStructure()) {
+					let jsonFields = {};
+					try {
+						jsonFields = JSON.parse(col.JsonStructure());
+					} catch (e) {
+						return;
+					}
+
+					for (const key in jsonFields) {
+						if (jsonFields.hasOwnProperty(key)) {
+							columns.push({
+								Id: -1,
+								ColumnName: col.ColumnName() + "." + key,
+								DisplayName: col.DisplayName() + " > " + key,
+								ParentJsonColumn: col,
+								FieldType: "JsonField"
+							});
+						}
+					}
+				}
+			});
+
+			return columns;
+		});
+
+		_.forEach(t.Columns(), function (e) {
+			var tableMatch = _.filter(self.model(), function (x) { return x.TableName() == e.ForeignTable(); });
+			e.JoinTable = ko.observable(tableMatch != null && tableMatch.length > 0 ? tableMatch[0] : null);
+			e.JoinTable.subscribe(function (newValue) {
+				e.ForeignTable(newValue.TableName());
+			});
+
+			tableMatch = _.filter(self.model(), function (x) { return x.TableName() == e.ForeignParentTable(); });
+			e.ForeignJoinTable = ko.observable(tableMatch != null && tableMatch.length > 0 ? tableMatch[0] : null);
+			e.ForeignJoinTable.subscribe(function (newValue) {
+				e.ForeignParentTable(newValue.TableName());
+			});
+
+			e.restrictDateRangeFilter = ko.observable(e.RestrictedDateRange() != '' && e.RestrictedDateRange() != null);
+			e.restrictDateRangeNumber = ko.observable(1);
+			e.restrictDateRangeValue = ko.observable();
+
+			if (e.restrictDateRangeFilter()) {
+				var tokens = e.RestrictedDateRange().split(' ');
+				e.restrictDateRangeNumber(tokens[0]);
+				e.restrictDateRangeValue(tokens[1]);
+			}
+
+			e.restrictDateRangeFilter.subscribe(function (newValue) {
+				if (!newValue) {
+					e.RestrictedDateRange('');
+				} else {
+					e.RestrictedDateRange(e.restrictDateRangeNumber() + ' ' + e.restrictDateRangeValue());
+				}
+			});
+
+			e.restrictDateRangeNumber.subscribe(function () {
+				e.RestrictedDateRange(e.restrictDateRangeNumber() + ' ' + e.restrictDateRangeValue());
+			});
+
+			e.restrictDateRangeValue.subscribe(function () {
+				e.RestrictedDateRange(e.restrictDateRangeNumber() + ' ' + e.restrictDateRangeValue());
+			});
+
+			e.JsonStructure.subscribe(function (newValue) {
+				if (newValue) {
+					try {
+						var data = JSON.parse(newValue);
+						if (typeof data !== 'object' || Array.isArray(data)) {
+							toastr.error('Invalid JSON data. Please enter a valid JSON object (Arrays are not allowed)');
+							e.JsonStructure('');
+
+						}
+					} catch (ex) {
+						toastr.error('Invalid JSON format. Please enter a valid JSON object (Arrays are not allowed)');
+						e.JsonStructure('')
+					}
+				}
+			})
+
+		});
+
+		t.selectAllColumns = function (e) {
+			_.forEach(t.Columns(), function (c) {
+				c.Selected(true);
+			});
+		}
+
+		t.unselectAllColumns = function (e) {
+			_.forEach(t.Columns(), function (c) {
+				c.Selected(false);
+			});
+		}
+
+		t.Selected.subscribe(function (x) {
+			if (x) {
+				t.selectAllColumns();
+				t.autoFormat();
+			}
+		});
+		t.autoSort = function (e) {
+			var sorted = t.Columns().slice().sort(function (a, b) {
+				var nameA = a.DisplayName().toLowerCase();
+				var nameB = b.DisplayName().toLowerCase();
+				if (nameA < nameB) return -1;
+				if (nameA > nameB) return 1;
+				return 0;
+			});
+			_.forEach(sorted, function (col, index) {
+				col.DisplayOrder(index + 1);
+			});
+			t.Columns(sorted);
+		};
+		t.autoFormat = function (e) {
+			_.forEach(t.Columns(), function (c) {
+				var displayName = c.DisplayName();
+				displayName = displayName.replace(/_/g, ' ');
+
+				// Split PascalCase into two separate words
+				displayName = displayName.replace(/([a-z])([A-Z])/g, '$1 $2');
+
+				// Capitalize the first letter of each word
+				displayName = displayName.split(' ').map(function (word) {
+					return word.charAt(0).toUpperCase() + word.slice(1);
+				}).join(' ');
+
+				c.DisplayName(displayName);
+			});
+		}
+
+		t.exportTableJson = function () {
+
+			if (!t) return toastr.warning('No table to export.');
+
+			bootbox.confirm({
+				title: "Confirm Export Table",
+				message: `Export table "${t.TableName ? t.TableName() : ''}"?`,
+				buttons: {
+					cancel: { label: 'Cancel', className: 'btn-secondary' },
+					confirm: { label: 'Export', className: 'btn-primary' }
+				},
+				callback: function (ok) {
+					if (!ok) return;
+
+					const exportObj = ko.mapping.toJS(t, {
+						ignore: ["saveTable", "JoinTable", "ForeignJoinTable"]
+					});
+
+					downloadJson(
+						JSON.stringify(exportObj, null, 2),
+						`${t.TableName ? t.TableName() : 'Table'}.json`,
+						'application/json'
+					);
+
+					toastr.success('Table schema exported.');
+				}
+			});
+		};
+
+		t.previewTable = function (apiKey, dbKey) {
+			previewData(null);
+			var sql = !t.CustomTable()
+							? `SELECT TOP 100 * FROM ${(t.SchemaName() ? '['+t.SchemaName()+'].' : '')}[${t.TableName()}]`
+							: t.CustomTableSql().replace(/^SELECT/, "SELECT TOP 100");
+			
+			return ajaxcall({
+				url: options.getPreviewFromSqlUrl,
+				type: "POST",
+				data: JSON.stringify({
+					value: sql,
+					accountKey: keys.AccountApiKey,
+					dataConnectKey: keys.DatabaseApiKey,
+					dynamicColumns: false
+				})
+			}).done(function (result) {
+				if (result.d) result = result.d;
+
+				if (result.errorMessage) {
+					toastr.error("Could not execute Query. Please check your query and try again. Error: " + result.errorMessage);
+					return;
+				}
+
+				previewData(result.ReportData);
+				$('#data-preview-modal').modal('show');
+			});
+		}
+
+		t.deleteTable = function (apiKey, dbKey) {
+			var e = ko.mapping.toJS(t, {
+				'ignore': ["saveTable", "JoinTable", "ForeignJoinTable"]
+			});
+			bootbox.confirm("Are you sure you would like to delete Table '" + e.DisplayName + "'?", function (r) {
+				if (r) {
+					ajaxcall({
+						url: options.apiUrl,
+						type: 'POST',
+						data: JSON.stringify({
+							method: options.deleteTableUrl,
+							model: JSON.stringify({
+								account: apiKey,
+								dataConnect: dbKey,
+								tableId: e.Id
+							})
+						})
+					}).done(function () {
+						toastr.success("Deleted table " + e.DisplayName);
+						t.Selected(false);
+						activeTable(null);
+						if (e.CustomTable) {
+							self.model.remove(t);							
+						}
+					});
+				}
+			});
+		}
+
+		t.saveTable = function (apiKey, dbKey, silent) {
+			return new Promise(function (resolve, reject) {
+				var e = ko.mapping.toJS(t, {
+					'ignore': ["saveTable", "JoinTable", "ForeignJoinTable"]
+				});
+
+				if (!t.Selected()) {
+					t.deleteTable(apiKey, dbKey);
+					resolve(false); // table deleted
+					return;
+				}
+
+				if (e.DynamicColumns) {
+					e.Columns = [] 
+				} else if (_.filter(e.Columns, function (x) { return x.Selected; }).length == 0) {
+					toastr.error("Cannot save table " + e.DisplayName + ", no columns selected");
+					resolve(false);
+					return;
+				}
+				if (e.Columns) {
+					_.each(e.Columns, function (col) {
+						if (!col.ForeignKey) {
+							col.ForeignTable = null;
+							col.ForeignKeyField = null;
+							col.ForeignValueField = null;
+						}
+						if (!col.ForeignParentKey) {
+							col.ForeignParentTable = null;
+							col.ForeignParentApplyTo = null;
+							col.ForeignParentKeyField = null;
+							col.ForeignParentValueField = null;
+						}
+					});
+				}
+				ajaxcall({
+					url: options.apiUrl,
+					type: 'POST',
+					data: JSON.stringify({
+						method: options.saveTableUrl,
+						model: JSON.stringify({
+							account: apiKey,
+							dataConnect: dbKey,
+							table: e
+						})
+					})
+				}).done(function (x) {
+					if (x && x.d) x = x.d;
+					if (x.success) {
+						if (x.tableId) t.Id(x.tableId);
+						if (silent !== true) toastr.success("Saved table " + e.DisplayName);
+						resolve(true);
+					} else {
+						toastr.error("Error saving table " + e.DisplayName);
+						resolve(false);
+					}
+				}).fail(function () {
+					toastr.error("Error saving table " + e.DisplayName);
+					resolve(false);
+				});
+			});
+		};
+
+		t.SchemaName(t.SchemaName() ?? "");
+		return t;
+    }
+
+	_.forEach(self.model(), function (t) {
+		self.processTable(t);
+		// t.Selected(false);
+	});
+
+	self.refresh = function (result) {
+		var sortedTables = _.sortBy(result.Tables, ['TableName']);
+		var mdl = ko.mapping.fromJS(sortedTables)();
+		
+		_.forEach(mdl, function (t) {
+			self.processTable(t);
+			// t.Selected(false);
+		});
+
+		self.model(mdl);
+	};
+
+	self.exportTablesJson = function (customOnly) {
+		const inCategory = t => customOnly ? t.CustomTable() : !t.CustomTable();
+		const all = self.model().filter(inCategory);
+		const filtered = self.filteredTables().filter(inCategory);
+		const selected = filtered.filter(t => t.Selected());
+
+		if (!selected.length) return toastr.warning('No tables to export.');
+
+		const msg = filtered.length < all.length
+			? `Exporting ${selected.length} selected tables (filtered: ${filtered.length} of ${all.length} total).`
+			: `Exporting ${selected.length} selected of ${all.length} total tables.`;
+
+
+		bootbox.confirm({
+			title: "Confirm Export Tables",
+			message: msg,
+			buttons: {
+				cancel: { label: 'Cancel', className: 'btn-secondary' },
+				confirm: { label: 'Export', className: 'btn-primary' }
+			},
+			callback: ok => {
+				if (!ok) return;
+				const exportList = selected.map(t => ko.mapping.toJS(t, {
+					ignore: ["saveTable", "JoinTable", "ForeignJoinTable"]
+				}));
+				downloadJson(JSON.stringify(exportList, null, 2),
+					customOnly ? 'CustomTables.json' : 'Tables.json', 'application/json');
+				toastr.success('Table schema exported.');
+			}
+		});
+	};
+
+	self.availableTables = ko.computed(function () {
+		return _.filter(self.model(), function (e) {
+			return e.Id() > 0 && e.Selected();
+		});
+	})
+
+	self.tableFilter = ko.observable();
+
+	self.filteredTables = ko.computed(function () {
+		var filterText = self.tableFilter();
+		if (filterText == null || filterText == '') {
+			return self.model();
+		}
+
+		return _.filter(self.model(), function (e) {
+			return e.TableName() && e.TableName().toLowerCase().indexOf(filterText.toLowerCase()) >= 0;
+		})
+	})
+
+	self.clearTableFilter = function () {
+		self.tableFilter('');
+	}
+
+	self.selectAll = function (customOnly) {
+		_.forEach(self.model(), function (e) {
+			if (customOnly ? e.CustomTable() === true : e.CustomTable() === false) {
+				e.Selected(true);
+			}
+		});
+	}
+
+	self.unselectAll = function (customOnly) {
+		_.forEach(self.model(), function (e) {
+			if (customOnly ? e.CustomTable() === true : e.CustomTable() === false) {
+				e.Selected(false);
+			}
+		});
+	}	
+
+	self.allSelected = function (customOnly) {
+		var list = _.filter(self.model(), function (e) {
+			return customOnly ? e.CustomTable() === true : e.CustomTable() === false;
+		});
+		return list.length > 0 && _.every(list, function (e) { return e.Selected(); });
+	}
+
+	self.toggleSelectAll = function (customOnly) {
+		if (self.allSelected(customOnly)) { self.unselectAll(customOnly); } else { self.selectAll(customOnly); }
+	}
+
+	self.usedOnly = ko.observable(false);
+	self.toggleShowAll = function () {
+		self.usedOnly(!self.usedOnly());
+	}
+
+	self.columnSorted = function (args) {
+		_.forEach(args.targetParent(), function (e, index) {
+			e.DisplayOrder(index);
+		});
+
+	}
+}
+
+var proceduresViewModel = function (options) {
+	var self = this;
+	self.savedProcedures = ko.mapping.fromJS(options.model.Procedures, {
+		'ignore': ["TableName"]
+	});
+
+	self.tables = options.model.Tables;
+	self.setupProcedure = function (p) {
+		_.forEach(p.Parameters(), function (e) {
+			var tableMatch = _.filter(self.tables, function (x) { return x.TableName == e.ForeignTable(); });
+			e.JoinTable = ko.observable(tableMatch != null && tableMatch.length > 0 ? tableMatch[0] : null);
+			e.JoinTable.subscribe(function (newValue) {
+				e.ForeignTable(newValue.TableName);
+			});
+
+			e.ParameterValue.subscribe(function (x) {
+				if (!x) {
+					e.Hidden(false);
+				}
+			});
+		});
+
+		p.deleteTable = function (apiKey, dbKey) {
+			var e = ko.mapping.toJS(p);
+
+			bootbox.confirm("Are you sure you would like to delete Procedure '" + e.TableName + "'? <br><br>WARNING: Deleting the stored procedure will also delete all Reports using this Stored Proc.", function (r) {
+				if (r) {
+					ajaxcall({
+						url: options.apiUrl,
+						type: 'POST',
+						data: JSON.stringify({
+							method: options.deleteProcUrl,
+							model: JSON.stringify({
+								procId: e.Id,
+								account: apiKey,
+								dataConnect: dbKey
+							})
+						})
+					}).done(function () {
+						toastr.success("Deleted procedure " + e.TableName);
+						self.savedProcedures.remove(p);
+					});
+				}
+			});
+
+			return;
+		}
+	}
+
+	_.forEach(self.savedProcedures(), function (p) {
+		self.setupProcedure(p);
+	});
+
+}
+
+var validation = function () {
+	var self = this;
+	// ui-validation
+	self.isInputValid = function (ctl) {
+		// first check for custom validation
+		if ($(ctl).attr("data-notempty") != null) {
+			if ($(ctl).children("option").length == 0)
+				return false;
+		}
+
+		// next try html5 validation if availble
+		if (ctl.validity) {
+			return ctl.validity.valid;
+		}
+
+		// finally just check for required attr
+		if ($(ctl).attr("required") != null && $(ctl).val() == "")
+			return false;
+
+		return true;
+	};
+
+
+	self.clearForm = function (formSelector) {
+		var curInputs = $(formSelector).find("input, select, textarea"),
+			isValid = true;
+
+		$(".needs-validation").removeClass("was-validated");
+		for (var i = 0; i < curInputs.length; i++) {
+			$(curInputs[i]).removeClass("is-invalid");
+		}
+
+	};
+
+	self.validateForm = function (formSelector) {
+		var curInputs = $(formSelector).find("input, select, textarea"),
+			isValid = true;
+
+		$(".needs-validation").removeClass("was-validated");
+		for (var i = 0; i < curInputs.length; i++) {
+			$(curInputs[i]).removeClass("is-invalid");
+			if (!self.isInputValid(curInputs[i])) {
+				isValid = false;
+				$(".needs-validation").addClass("was-validated");
+				$(curInputs[i]).addClass("is-invalid");
+			}
+		}
+
+		return isValid;
+	};
+
+}
+
+var customSqlModel = function (options, keys, tables, activeTable) {
+	var self = this;
+	self.customTableName = ko.observable();
+	self.customSql = ko.observable();
+	self.useAi = ko.observable(false);
+	self.dynamicColumns = ko.observable(false);
+	self.columnTranslation = ko.observable('{column}');
+	self.dynamicValuesTableId = ko.observable();
+	self.textQuery = new textQuery(options);
+	self.selectedTable = null;
+	var validator = new validation();
+	self.addNewCustomSqlTable = function () {	
+		self.selectedTable = null;
+		self.textQuery.resetQuery();
+		validator.clearForm('#custom-sql-modal');
+		self.customTableName('');
+		self.customSql('');
+		$('#custom-sql-modal').modal('show');
+	}
+
+	self.viewCustomSql = function (e) {
+		self.selectedTable = ko.mapping.toJS(e);
+		self.textQuery.resetQuery();
+		validator.clearForm('#custom-sql-modal');
+		self.customTableName(e.TableName());
+		self.customSql(e.CustomTableSql());
+		self.dynamicColumns(e.DynamicColumns());
+		self.columnTranslation(e.DynamicColumnTranslation());
+		self.dynamicValuesTableId(e.DynamicValuesTableId());
+
+		$('#custom-sql-modal').modal('show');
+	}
+	
+	self.buildSqlUsingAi = function () {
+		var queryText = document.getElementById("query-input").innerText;
+
+		var fieldIds = _.filter(self.textQuery.queryItems, { type: 'Field' }).map(function (x) { return x.value });
+		if (fieldIds.length == 0) fieldIds.push(0);
+		ajaxcall({
+			url: options.apiUrl,
+			data: {
+				method: "/ReportApi/GetFieldsByIds",
+				model: JSON.stringify({
+					fieldIds: fieldIds.join(",")
+				})
+			}
+		}).done(function (result) {
+			if (result.d) result = result.d;
+			ajaxcall({
+				url: options.apiUrl,
+				data: {
+					method: "/ReportApi/RunQueryAi",
+					model: JSON.stringify({
+						query: queryText,
+						fieldIds: fieldIds.join(","),
+						dontEncrypt: true
+					})
+				}
+			}).done(function (result) {
+				if (result.d) result = result.d;
+				if (result.success === false) {
+					toastr.error(result.message || 'Could not process this correctly, please try again');
+					return;
+				}
+
+				self.customSql(beautifySql(result.sql, false));
+			});
+		});
+	}
+
+	self.beautifySql = function () {
+		self.customSql(beautifySql(self.customSql(), false));
+    }
+
+	self.executeSql = function () {
+		var valid = validator.validateForm('#custom-sql-modal');
+		
+		if (!self.customTableName()) {
+			toastr.error("Custom Table Name is required");
+			valid = false;
+		}
+
+		if (self.customTableName().indexOf(' ') > -1) {
+			toastr.error("Custom Table Name cannot have spaces");
+			valid = false;
+		}
+
+		if (!self.customSql() || self.customSql().toLowerCase().indexOf('select') != 0) {
+			toastr.error("Custom SELECT SQL is required, and it must start with SELECT");
+			valid = false;
+		}
+
+		if (self.dynamicColumns() && self.columnTranslation().indexOf('{column}') < 0) {
+			toastr.error("You must use {column} in the code to use the dynamic column");
+			valid = false;
+		}
+
+		if (self.dynamicColumns() && !self.dynamicValuesTableId()) {
+			toastr.error("Please pick a table that contains dynamic column values");
+			valid = false;
+		}
+		var matchTable = _.find(tables.model(), function (x) {
+			return x.TableName() == self.customTableName() && (!self.selectedTable || self.selectedTable.Id != x.Id());
+		});
+
+		if (matchTable) {
+			toastr.error("Table " + self.customTableName() + " already exists, please choose a different name.");
+			valid = false;
+        }
+
+		if (!valid) {
+			return false;
+        }
+
+		return ajaxcall({
+			url: options.getSchemaFromSql,
+			type: 'POST',
+			data: JSON.stringify({
+				value: self.customSql(),
+				dynamicColumns: self.dynamicColumns(),
+				accountKey: keys.AccountApiKey,
+				dataConnectKey: keys.DatabaseApiKey
+			})
+		}).done(function (result) {
+			if (result.d) result = result.d;
+
+			if (result.errorMessage) {
+				toastr.error("Could not execute Query. Please check your query and try again. Error: " + result.errorMessage);
+				return;
+			}
+			
+			if (!self.selectedTable) {
+				result.TableName = self.customTableName();
+				result.DisplayName = self.customTableName();
+				result.DynamicColumns = self.dynamicColumns();
+				result.DynamicColumnTranslation = self.columnTranslation() ? self.columnTranslation() : "{column}";
+				result.DynamicValuesTableId = self.dynamicValuesTableId();
+				var t = tables.processTable(ko.mapping.fromJS(result));				
+				tables.model.push(t);
+				activeTable(t);
+			} else {
+				var table = _.find(tables.model(), function (x) { return x.Id() == self.selectedTable.Id; });
+				table.TableName(self.customTableName());
+				table.CustomTableSql(self.customSql());
+				table.DynamicColumns(self.dynamicColumns());
+				table.DynamicColumnTranslation(self.columnTranslation() ? self.columnTranslation() : "{column}");
+				table.DynamicValuesTableId(self.dynamicValuesTableId());
+
+				_.forEach(result.Columns, function (c) {
+					// if column id matches, update display name and data type, otherwise add it
+					var column = _.find(table.Columns(), function (x) {
+						return c.ColumnName.toLowerCase() == x.ColumnName().toLowerCase();
+					});
+
+					if (column) {
+						column.DisplayName(c.DisplayName);
+						column.FieldType(c.FieldType);
+					} else {
+						table.Columns.push(ko.mapping.fromJS(c));
+					}
+				});
+
+				// remove all columns not in list
+				const keep = _.map(result.Columns, function (c) {
+					return c.ColumnName.toLowerCase();
+				});
+
+				table.Columns.remove(function (x) {
+					return !_.includes(keep, x.ColumnName().toLowerCase());
+				});
+			}
+
+			toastr.info("Query loaded successfully, please configure and then Save to add or update the custom table to commit changes");
+
+			self.selectedTable = null;
+			$('#custom-sql-modal').modal('hide');
+		});
+
+		return false;
+    }
+}
+
+var usersRolesViewModel = function (options, settings, previewData) {
+	var self = this;
+
+	self.userSource = settings.userSource;
+	self.loginMode = settings.loginMode;
+	self.clientIdLabel = settings.clientIdLabel;
+	self.clientIds = settings.clientIds;   // catalog of { id, text }
+	self.editingClient = ko.observable(null);
+	self.editingLabel = ko.observable(false);
+	self.labelDraft = ko.observable('');
+
+	self.codeUsers = ko.observableArray([]);
+	self.codeRoles = ko.observableArray([]);
+	self.codeClientIds = ko.observableArray([]);
+
+	// SQL source: one saved query per list, stored as DataDrivenQueries with a QueryType.
+	// Managed like the Email Lists: edit in a modal, prove the query runs, then save.
+	var sqlValidator = new validation();
+
+	function sqlSource(queryType, title, hint, expects, placeholder) {
+		return {
+			queryType: queryType,
+			title: title,
+			hint: hint,
+			expects: expects,
+			placeholder: placeholder,
+			savedId: ko.observable(0),
+			sqlQuery: ko.observable(''),
+			draft: ko.observable(''),
+			rows: ko.observableArray([]),
+			loading: ko.observable(false),
+			error: ko.observable('')
+		};
+	}
+
+	self.sqlUsers = sqlSource('Users', 'Users Query',
+		'One row per user, with an id and a text column.',
+		['id', 'text'],
+		'SELECT UserId AS id, DisplayName AS text FROM Users WHERE IsActive = 1');
+	self.sqlRoles = sqlSource('UserRoles', 'Roles Query',
+		'One row per role name.',
+		[],
+		'SELECT DISTINCT RoleName FROM Roles');
+	self.sqlClients = sqlSource('Clients', 'Clients Query',
+		'One row per client, with an id and a text column.',
+		['id', 'text'],
+		'SELECT ClientId AS id, ClientName AS text FROM Clients');
+	// Client ids can be renamed (Tenant, Company...), so this source's wording follows the label.
+	self.sqlClients.title = ko.pureComputed(function () { return (self.clientIdLabel() || 'Client Id') + 's Query'; });
+	self.sqlClients.hint = ko.pureComputed(function () { return 'One row per ' + (self.clientIdLabel() || 'Client Id').toLowerCase() + ', with an id and a text column.'; });
+
+	self.sqlSources = [self.sqlUsers, self.sqlRoles, self.sqlClients];
+
+	// The source open in the shared modal. Edits go to draft so Cancel discards them.
+	self.currentSql = ko.observable(self.sqlUsers);
+
+	self.loadSqlSources = function () {
+		_.forEach(self.sqlSources, function (src) {
+			ajaxcall({
+				url: options.reportsApiUrl,
+				data: { method: options.getEmailQueriesUrl, model: JSON.stringify({ includeGlobal: true, queryType: src.queryType }) }
+			}).done(function (x) {
+				if (x.d) x = x.d;
+				if (x.result) x = x.result;
+				var first = (x.queries || [])[0];
+				src.savedId(first ? first.id : 0);
+				src.sqlQuery(first ? (first.sqlQuery || '') : '');
+				self.refreshSqlList(src);
+			});
+		});
+	};
+
+	self.editSqlSource = function (src) {
+		src.draft(src.sqlQuery());
+		self.currentSql(src);
+		sqlValidator.clearForm('#users-roles-sql-modal');
+		$('#users-roles-sql-modal').modal('show');
+	};
+
+	self.beautifyCurrentSql = function () {
+		var src = self.currentSql();
+		if (src.draft()) src.draft(beautifySql(src.draft(), false));
+	};
+
+	// The lists are read back by column name, so a wrong shape would fail silently later.
+	self.missingColumns = function (src, data) {
+		if (!src.expects || !src.expects.length) return [];
+		var names = _.map((data && data.Columns) || [], function (c) { return (c.ColumnName || '').toLowerCase(); });
+		return _.filter(src.expects, function (e) { return names.indexOf(e) < 0; });
+	};
+
+	self.saveSqlSource = function () {
+		var src = self.currentSql();
+		if (!sqlValidator.validateForm('#users-roles-sql-modal')) return;
+		// Prove it runs, and returns what the list needs, before storing it.
+		self.runSql(src.draft(), function (error, data) {
+			if (error) { toastr.error('Query is not valid and was not saved: ' + error); return; }
+			var missing = self.missingColumns(src, data);
+			if (missing.length) {
+				toastr.error('The ' + ko.unwrap(src.title) + ' must return ' + missing.join(' and ') + ', so it was not saved.');
+				return;
+			}
+			ajaxcall({
+				url: options.reportsApiUrl,
+				data: {
+					method: options.saveEmailQueryUrl,
+					model: JSON.stringify({ id: src.savedId(), name: ko.unwrap(src.title), queryType: src.queryType, sqlQuery: src.draft() })
+				}
+			}).done(function (x) {
+				if (x.d) x = x.d;
+				if (x.result) x = x.result;
+				if (x && x.Message) { toastr.error(x.Message); return; }
+				if (x && x.id) src.savedId(x.id);
+				src.sqlQuery(src.draft());
+				self.refreshSqlList(src);
+				toastr.success(ko.unwrap(src.title) + ' saved');
+				$('#users-roles-sql-modal').modal('hide');
+			});
+		});
+	};
+
+	self.deleteSqlSource = function (src) {
+		bootbox.confirm('Are you sure you would like to delete the ' + ko.unwrap(src.title) + '?', function (r) {
+			if (!r) return;
+			ajaxcall({
+				url: options.reportsApiUrl,
+				data: { method: options.deleteEmailQueryUrl, model: JSON.stringify({ id: src.savedId() }) }
+			}).done(function () {
+				src.savedId(0);
+				src.sqlQuery('');
+				src.rows([]);
+				src.error('');
+				toastr.success(ko.unwrap(src.title) + ' deleted');
+			});
+		});
+	};
+
+	// The saved query is what the app will read at runtime, so the tab shows its rows.
+	self.refreshSqlList = function (src) {
+		src.error('');
+		if (!src.sqlQuery()) { src.rows([]); return; }
+		src.loading(true);
+		self.runSql(src.sqlQuery(), function (error, data) {
+			src.loading(false);
+			if (error) { src.rows([]); src.error(error); return; }
+			src.rows(self.mapSqlRows(data));
+		});
+	};
+
+	// id and text by name when they are there, otherwise the first two columns.
+	self.mapSqlRows = function (data) {
+		var cols = _.map((data && data.Columns) || [], function (c) { return (c.ColumnName || '').toLowerCase(); });
+		var idIdx = cols.indexOf('id');
+		var textIdx = cols.indexOf('text');
+		if (idIdx < 0) idIdx = 0;
+		if (textIdx < 0) textIdx = cols.length > 1 ? 1 : 0;
+		return _.map((data && data.Rows) || [], function (r) {
+			var items = r.Items || [];
+			var id = items[idIdx] ? (items[idIdx].Value || '') : '';
+			var text = items[textIdx] ? (items[textIdx].Value || '') : '';
+			return { id: id, text: text || id };
+		});
+	};
+
+	// Shows the result in the same grid the custom tables use.
+	self.previewSqlSource = function (src, sql) {
+		sql = sql || src.sqlQuery();
+		if (!sql) { toastr.error('Enter a SQL query first'); return; }
+		self.runSql(sql, function (error, data) {
+			if (error) { toastr.error('Query error: ' + error); return; }
+			if (!data || !(data.Rows || []).length) { bootbox.alert('This query returned no rows.'); return; }
+			var missing = self.missingColumns(src, data);
+			if (missing.length) toastr.warning('The ' + ko.unwrap(src.title) + ' should return ' + missing.join(' and ') + '.');
+			previewData(data);
+			$('#data-preview-modal').modal('show');
+		});
+	};
+
+	// Previews what is typed in the modal, so unsaved edits can be checked before saving.
+	self.previewCurrentSql = function () {
+		var src = self.currentSql();
+		self.previewSqlSource(src, src.draft());
+	};
+
+	// Shared runner, surfaces the real SQL error rather than an empty result.
+	self.runSql = function (sql, done) {
+		ajaxcall({
+			url: options.getPreviewFromSqlUrl,
+			type: 'POST',
+			data: JSON.stringify({ value: sql, accountKey: options.model.AccountApiKey, dataConnectKey: options.model.DatabaseApiKey, dynamicColumns: false })
+		}).done(function (result) {
+			if (result.d) result = result.d;
+			var error = result.Exception || result.errorMessage || (result.HasError ? 'The query returned an error.' : '');
+			done(error, result.ReportData);
+		}).fail(function () { done('Could not reach the server to run the query.', null); });
+	};
+
+	self.portalUsers = ko.observableArray([]);
+	self.portalRoles = ko.observableArray([]);
+	self.loadingUsers = ko.observable(false);
+	self.editingUser = ko.observable(null);
+	self.newRoleName = ko.observable('');
+
+	self.clientIdChoices = ko.computed(function () {
+		return _.map(self.clientIds() || [], function (c) {
+			return (c && typeof c === 'object') ? { id: c.id || '', text: c.text || c.id || '' } : { id: c, text: c };
+		});
+	});
+
+	self.clientNames = function (ids) {
+		var choices = self.clientIdChoices();
+		return _.map(ids || [], function (id) {
+			var match = _.find(choices, function (c) { return c.id === id; });
+			return match ? match.text : id;
+		}).join(', ');
+	};
+
+	var api = function (method, model) {
+		model = model || {};
+		model.adminMode = true;
+		return ajaxcall({
+			url: options.apiUrl,
+			type: 'POST',
+			data: JSON.stringify({ method: '/ReportApi/' + method, model: JSON.stringify(model) })
+		});
+	};
+
+	self.loadPortal = function () {
+		self.loadingUsers(true);
+		api('GetAccountUsersAndRoles', { source: 'portal' }).done(function (r) {
+			if (r && r.d) r = r.d;
+			self.portalUsers((r && r.users) || []);
+			self.portalRoles((r && r.roles) || []);
+		}).fail(function () {
+			toastr.error('Could not load Users and Roles from your Dotnet Report account');
+		}).always(function () { self.loadingUsers(false); });
+	};
+
+	self.settingsDirty = ko.observable(false);
+	self.markDirty = function () { self.settingsDirty(true); };
+
+	self.onTabOpen = function () {
+		// codeUsers/codeRoles/codeClientIds are what the application supplies in code, whichever
+		// source is currently saved.
+		ajaxcall({ url: options.getUsersAndRoles }).done(function (data) {
+			self.codeUsers(data.codeUsers || []);
+			self.codeRoles(data.codeUserRoles || []);
+			self.codeClientIds(data.codeClientIds || []);
+		});
+		if (self.userSource() === 'portal') self.loadPortal();
+		self.loadSqlSources();
+		self.settingsDirty(false);
+	};
+
+	self.userSource.subscribe(self.markDirty);
+	self.loginMode.subscribe(self.markDirty);
+	self.clientIdLabel.subscribe(self.markDirty);
+	self.clientIds.subscribe(self.markDirty);
+
+	self.userSource.subscribe(function (v) {
+		if (v === 'sql') self.loadSqlSources();
+		if (v === 'portal') {
+			self.loadPortal();
+		} else {
+			self.portalUsers([]);
+			self.portalRoles([]);
+			self.editingUser(null);
+			self.loadingUsers(false);
+		}
+	});
+
+	var buildEditor = function (u) {
+		u = u || {};
+		var assignedRoles = u.roles || [];
+		var assignedClients = u.clientIds || [];
+		return {
+			id: ko.observable(u.id || ''),
+			name: ko.observable(u.name || ''),
+			email: ko.observable(u.email || ''),
+			roles: _.map(self.portalRoles(), function (r) {
+				return { id: r.id, text: r.text, isSelected: ko.observable(assignedRoles.indexOf(r.text) >= 0) };
+			}),
+			clients: _.map(self.clientIdChoices(), function (c) {
+				return { id: c.id, text: c.text, isSelected: ko.observable(assignedClients.indexOf(c.id) >= 0) };
+			})
+		};
+	};
+
+	self.newUser = function () { self.editingUser(buildEditor(null)); };
+	self.editUser = function (u) { self.editingUser(buildEditor(u)); };
+
+	self.saveUser = function () {
+		var e = self.editingUser();
+		if (!e) return;
+		if (!e.email()) { toastr.error('Please enter an email'); return; }
+		var model = {
+			userJson: JSON.stringify({
+				Id: e.id() || '',
+				Name: e.name() || '',
+				Email: e.email(),
+				Roles: _.map(_.filter(e.roles, function (r) { return r.isSelected(); }), function (r) { return r.text; }),
+				ClientIds: _.map(_.filter(e.clients, function (c) { return c.isSelected(); }), function (c) { return c.id; })
+			})
+		};
+		api('SaveAccountUser', model).done(function () {
+			toastr.success('User saved');
+			self.editingUser(null);
+			self.loadPortal();
+		}).fail(function () { toastr.error('Could not save user'); });
+	};
+
+	self.sendPasswordSetup = function (u) {
+		if (!u || !u.email) { toastr.error('This user has no email address'); return; }
+		ajaxcall({
+			url: options.sendPasswordSetupUrl,
+			type: 'POST',
+			data: JSON.stringify({ email: u.email })
+		}).done(function (r) {
+			if (r && r.Success === false) { toastr.error(r.Message || 'Could not send the email'); return; }
+			toastr.success('Password setup email sent to ' + u.email);
+		}).fail(function () { toastr.error('Could not send the password setup email'); });
+	};
+
+	self.deleteUser = function (u) {
+		bootbox.confirm('Delete user ' + (u.email || u.text) + '?', function (ok) {
+			if (!ok) return;
+			api('DeleteAccountUser', { id: u.id }).done(function () {
+				toastr.success('User deleted');
+				self.loadPortal();
+			}).fail(function () { toastr.error('Could not delete user'); });
+		});
+	};
+
+	self.addRole = function () {
+		var name = (self.newRoleName() || '').trim();
+		if (!name) return;
+		if (_.filter(self.portalRoles(), function (r) { return (r.text || '').toLowerCase() === name.toLowerCase(); }).length) {
+			toastr.warning('Role already exists'); return;
+		}
+		api('SaveAccountRole', { roleJson: JSON.stringify({ Name: name }) }).done(function () {
+			toastr.success('Role added');
+			self.newRoleName('');
+			self.loadPortal();
+		}).fail(function () { toastr.error('Could not add role'); });
+	};
+
+	self.deleteRole = function (r) {
+		bootbox.confirm('Delete role ' + r.text + '? Users assigned to it will lose it.', function (ok) {
+			if (!ok) return;
+			api('DeleteAccountRole', { id: r.id }).done(function () {
+				toastr.success('Role deleted');
+				self.loadPortal();
+			}).fail(function () { toastr.error('Could not delete role'); });
+		});
+	};
+
+	self.newClient = function () {
+		self.editingClient({ id: ko.observable(''), text: ko.observable(''), original: null });
+	};
+
+	self.editClient = function (c) {
+		self.editingClient({ id: ko.observable(self.clientKey(c)), text: ko.observable(self.clientText(c)), original: c });
+	};
+
+	self.cancelClient = function () { self.editingClient(null); };
+
+	self.saveClient = function () {
+		var e = self.editingClient();
+		if (!e) return;
+		var id = (e.id() || '').trim();
+		if (!id) { toastr.warning('Id is required'); return; }
+		if (_.filter(self.clientIds(), function (c) { return c !== e.original && self.clientKey(c) === id; }).length) {
+			toastr.warning('Already added'); return;
+		}
+		var item = { id: id, text: (e.text() || '').trim() || id };
+		if (e.original) { self.clientIds.replace(e.original, item); } else { self.clientIds.push(item); }
+		self.editingClient(null);
+		self.persistSettings();
+	};
+
+	self.removeClientId = function (c) {
+		var label = self.clientIdLabel() || 'Client Id';
+		bootbox.confirm({
+			title: 'Delete ' + label,
+			message: 'Delete <b>' + self.clientText(c) + '</b>? Reports, Folders and Dashboards restricted to this ' + label + ' will no longer match it.',
+			buttons: { cancel: { label: 'Cancel', className: 'btn-secondary' }, confirm: { label: 'Delete', className: 'btn-danger' } },
+			callback: function (ok) {
+				if (!ok) return;
+				self.clientIds.remove(c);
+				self.persistSettings();
+			}
+		});
+	};
+
+	self.clientText = function (c) { return (c && typeof c === 'object') ? (c.text || c.id) : c; };
+	self.clientKey = function (c) { return (c && typeof c === 'object') ? c.id : c; };
+
+	self.persistSettings = function () {
+		if (typeof settings.saveAppSettings !== 'function') {
+			toastr.error('Settings are not available, check your account connection');
+			return;
+		}
+		var p = settings.saveAppSettings();
+		if (p && p.done) { p.done(function () { self.settingsDirty(false); }); } else { self.settingsDirty(false); }
+	};
+
+	self.startEditLabel = function () {
+		self.labelDraft(self.clientIdLabel() || '');
+		self.editingLabel(true);
+	};
+
+	self.cancelLabel = function () { self.editingLabel(false); };
+
+	self.applyLabel = function () {
+		var v = (self.labelDraft() || '').trim();
+		if (!v) { toastr.warning('Label is required'); return; }
+		self.editingLabel(false);
+		if (v === self.clientIdLabel()) return;
+		self.clientIdLabel(v);
+		self.persistSettings();
+	};
+
+	self.saveSourceSettings = function () { self.persistSettings(); };
+};
+var settingPageViewModel = function (options) {
+	var self = this;
+	var dbConfig = options.model.DbConfig || {};
+	var validator = new validation();
+	var apiKey = options.model.AccountApiKey;
+	var dbKey = options.model.DatabaseApiKey;
+
+	self.backendApiUrl = ko.observable("");
+	self.emailServer = ko.observable("");
+	self.emailPort = ko.observable("");
+	self.emailUsername = ko.observable("");
+	self.emailPassword = ko.observable("");
+	self.emailName = ko.observable("");
+	self.emailAddress = ko.observable("");
+	self.selectedAppTheme = ko.observable();
+	self.selectedTimeZone = ko.observable();
+	self.useClientIdInAdmin = ko.observable(false);
+	self.useSqlBuilderInAdminMode = ko.observable(false);
+	self.useSqlCustomField = ko.observable(true);
+	self.noFolders = ko.observable(false);
+	self.noDefaultFolder = ko.observable(false);
+	self.showEmptyFolders = ko.observable(false);
+	self.allowUsersToManageFolders = ko.observable(true);
+	self.allowUsersToCreateReports = ko.observable(true);
+	self.allowUsersToCreateDashboards = ko.observable(true);
+	self.useAltPdf = ko.observable(false);
+	self.useAltPivot = ko.observable(false);
+	self.dontXmlExport = ko.observable(false);
+	self.dontWordExport = ko.observable(false);
+	self.usePromptBuilder = ko.observable(true);
+	self.showPageSize = ko.observable(false);
+	self.showImportExport = ko.observable(false);
+	self.licenseType = ko.observable(null);
+	self.isEnterprise = ko.observable(false);
+	self.canCopyReport = ko.observable(true);
+	self.useFunctions = ko.observable(false);
+	self.showScheduling = ko.observable(true);
+	self.showDesignerHints = ko.observable(true);
+	self.defaultDateFormat = ko.observable('United States');
+	self.dateFormatOptions = ['United States', 'United Kingdom', 'New Zealand', 'France', 'German', 'Spanish', 'Chinese'];
+	self.aiProvider = ko.observable('');
+	self.aiApiKey = ko.observable('');
+	self.aiApiKeyChanged = false;
+	self.aiModel = ko.observable('');
+	self.aiEnabled = ko.observable(false);
+	// Users & Roles source ('code' | 'portal') + client/tenant catalog and its display label
+	self.userSource = ko.observable('code');
+	// How users sign in ('embedded' | 'standalone' | 'sso'). Informational: the behaviour comes from code.
+	self.loginMode = ko.observable('embedded');
+	self.clientIdLabel = ko.observable('Client Id');
+	self.clientIds = ko.observableArray([]);
+	// Sync aiEnabled with aiProvider for backward compatibility
+	self.aiEnabled.subscribe(function (enabled) {
+		if (enabled && !self.aiProvider()) {
+			self.aiProvider('dotnetreport'); // Use our managed AI service
+		} else if (!enabled) {
+			self.aiProvider('');
+		}
+	});
+
+	self.appThemes = ko.observableArray([
+		{ name: 'Default', value: 'default' },
+		{ name: 'Dark', value: 'dark' },
+		{ name: 'Serenity', value: 'teal' },
+		{ name: 'Flatly', value: 'flatly' },
+		{ name: 'Lumen', value: 'lumen' },
+		{ name: 'Monotone', value: 'monotone' },
+		{ name: 'Morph', value: 'morph' },
+		{ name: 'Quartz', value: 'quartz' },
+		{ name: 'Sandstone', value: 'sandstone' },
+		{ name: 'Sketchy', value: 'sketchy' },
+		{ name: 'Solar', value: 'solar' }
+	]);
+	// Define an observable array to hold the list of timezones
+	self.timeZones = ko.observableArray([
+		{ displayName: '(UTC-11:00) Pacific/Midway', value: -11 },
+		{ displayName: '(UTC-10:00) Pacific/Honolulu', value: -10 },
+		{ displayName: '(UTC-9:00) America/Anchorage', value: -9 },
+		{ displayName: '(UTC-8:00) America/Los_Angeles', value: -8 },
+		{ displayName: '(UTC-7:00) America/Denver', value: -7 },
+		{ displayName: '(UTC-6:00) America/Chicago', value: -6 },
+		{ displayName: '(UTC-5:00) America/New_York', value: -5 },
+		{ displayName: '(UTC-4:30) America/Caracas', value: -4.5 },
+		{ displayName: '(UTC-4:00) America/Halifax', value: -4 },
+		{ displayName: '(UTC-3:00) America/Sao_Paulo', value: -3 },
+		{ displayName: '(UTC-3:30) America/St_Johns', value: -3.5 },
+		{ displayName: '(UTC-3:00) America/Argentina/Buenos_Aires', value: -3 },
+		{ displayName: '(UTC-2:00) Atlantic/South_Georgia', value: -2 },
+		{ displayName: '(UTC-1:00) Atlantic/Azores', value: -1 },
+		{ displayName: '(UTC-1:00) Atlantic/Cape_Verde', value: -1 },
+		{ displayName: '(UTC+0:00) Africa/Casablanca', value: 0 },
+		{ displayName: '(UTC+0:00) Europe/London', value: 0 },
+		{ displayName: '(UTC+1:00) Europe/Paris', value: 1 },
+		{ displayName: '(UTC+2:00) Europe/Istanbul', value: 2 },
+		{ displayName: '(UTC+2:00) Africa/Johannesburg', value: 2 },
+		{ displayName: '(UTC+2:00) Asia/Damascus', value: 2 },
+		{ displayName: '(UTC+2:00) Asia/Amman', value: 2 },
+		{ displayName: '(UTC+2:00) Asia/Beirut', value: 2 },
+		{ displayName: '(UTC+2:00) Asia/Jerusalem', value: 2 },
+		{ displayName: '(UTC+3:00) Asia/Riyadh', value: 3 },
+		{ displayName: '(UTC+3:30) Asia/Tehran', value: 3.5 },
+		{ displayName: '(UTC+4:00) Asia/Dubai', value: 4 },
+		{ displayName: '(UTC+4:00) Asia/Baku', value: 4 }
+	]);
+	self.saveAppSettings = function () {
+
+		if (this.isValidforAppSetting()) {
+			return ajaxcall({
+				url: options.apiUrl,
+				type: 'POST',
+				data: JSON.stringify({
+					method: options.saveAppSettingUrl,
+					model: JSON.stringify({
+						account: apiKey,
+						dataConnect: dbKey,
+						settings: JSON.stringify({
+							emailUserName: self.emailUsername() || '',
+							emailPassword: self.emailPassword() || '',
+							emailServer: self.emailServer() || '',
+							emailPort: self.emailPort() || '',
+							emailName: self.emailName() || '',
+							emailAddress: self.emailAddress() || '',
+							backendApiUrl: self.backendApiUrl() || '',
+							useClientIdInAdmin: self.useClientIdInAdmin(),
+							useSqlBuilderInAdminMode: self.useSqlBuilderInAdminMode(),
+							useSqlCustomField: self.useSqlCustomField(),
+							noFolders: self.noFolders(),
+							noDefaultFolder: self.noDefaultFolder(),
+							showEmptyFolders: self.showEmptyFolders(),
+							allowUsersToManageFolders: self.allowUsersToManageFolders(),
+							allowUsersToCreateReports: self.allowUsersToCreateReports(),
+							allowUsersToCreateDashboards: self.allowUsersToCreateDashboards(),
+							useAltPdf: self.useAltPdf(),
+							useAltPivot: self.useAltPivot(),
+							dontXmlExport: self.dontXmlExport(),
+							dontWordExport: self.dontWordExport(),
+							usePromptBuilder: self.usePromptBuilder(),
+							showPageSize: self.showPageSize(),
+							showImportExport: self.showImportExport(),
+							canCopyReport: self.canCopyReport(),
+							useFunctions: self.isEnterprise() ? self.useFunctions() : false,
+							showScheduling: self.showScheduling(),
+								showDesignerHints: self.showDesignerHints(),
+								defaultDateFormat: self.defaultDateFormat(),
+								aiProvider: self.aiProvider(),
+								aiApiKey: self.aiApiKeyChanged ? self.aiApiKey() : undefined,
+								aiModel: self.aiModel(),
+								aiEnabled: self.aiEnabled(),
+								userSource: self.userSource(),
+								loginMode: self.loginMode(),
+								clientIdLabel: self.clientIdLabel() || 'Client Id',
+								clientIds: self.clientIds()
+						})
+					})
+				})
+			}).done(function (response) {
+				if (response) {
+					if (response.success) {
+						toastr.success('Account Settings Updated');
+					} else {
+						toastr.error(response.message);
+					}
+				} else {
+					toastr.error('Error Saving Settings');
+					return false;
+				}
+			});
+		};
+
+	}
+	self.canAddFunction = ko.computed(function () {
+		return self.isEnterprise() && self.useFunctions();
+	});
+	self.getAppSettings = function () {
+
+		return ajaxcall({
+			url: options.apiUrl,
+			type: 'POST',
+			data: JSON.stringify({
+				method: "/ReportApi/GetAccountSettings",
+				model: "{}"
+			})
+		}).done(function (response) {
+
+			if (response) {
+				var settings = response; // Assuming the response contains the settings object
+				self.backendApiUrl(settings.backendApiUrl);
+				self.emailServer(settings.emailServer);
+				self.emailPort(settings.emailPort);
+				self.emailUsername(settings.emailUserName);
+				self.emailPassword(settings.emailPassword);
+				self.emailName(settings.emailName);
+				self.emailAddress(settings.emailAddress);
+				self.selectedAppTheme(settings.appThemes);
+				self.selectedTimeZone(settings.timeZone);
+
+				self.useClientIdInAdmin(settings.useClientIdInAdmin);
+				self.useSqlBuilderInAdminMode(settings.useSqlBuilderInAdminMode);
+				self.useSqlCustomField(settings.useSqlCustomField);
+				self.noFolders(settings.noFolders);
+				self.noDefaultFolder(settings.noDefaultFolder);
+				self.showEmptyFolders(settings.showEmptyFolders);
+				self.allowUsersToManageFolders(settings.allowUsersToManageFolders === false ? false : true);
+				self.allowUsersToCreateReports(settings.allowUsersToCreateReports === false ? false : true);
+				self.allowUsersToCreateDashboards(settings.allowUsersToCreateDashboards === false ? false : true);
+				self.useAltPdf(settings.useAltPdf);
+				self.useAltPivot(settings.useAltPivot);
+				self.dontXmlExport(settings.dontXmlExport);
+				self.dontWordExport(settings.dontWordExport);
+				self.usePromptBuilder(settings.usePromptBuilder === false ? false : true);
+				self.showPageSize(settings.showPageSize);
+				self.showImportExport(settings.showImportExport);
+				self.canCopyReport(settings.canCopyReport);
+				self.licenseType(settings.licenseType || settings.license || '');
+				self.isEnterprise(self.licenseType() && self.licenseType().toLowerCase() === 'enterprise');
+				if (self.isEnterprise()) {
+					self.useFunctions(settings.useFunctions === true);
+				} else {
+					self.useFunctions(false);
+				}			
+				self.showScheduling(settings.showScheduling);
+				self.showDesignerHints(settings.showDesignerHints !== false);
+				self.defaultDateFormat(settings.defaultDateFormat || 'United States');
+				self.aiProvider(settings.aiProvider || '');
+				self.aiApiKey(settings.aiApiKey || '');
+				self.aiApiKeyChanged = false;
+				self.aiModel(settings.aiModel || '');
+				self.aiEnabled(settings.aiEnabled === true || (settings.aiProvider && settings.aiProvider !== ''));
+				self.userSource(settings.userSource || 'code');
+				self.loginMode(settings.loginMode || 'embedded');
+				self.clientIdLabel(settings.clientIdLabel || 'Client Id');
+				self.clientIds(_.isArray(settings.clientIds) ? settings.clientIds : []);
+				//// Optionally, you can manually trigger change event for select elements
+				$('#themeSelect').trigger('change');
+				$('#timezoneSelect').trigger('change');
+			} else {
+				toastr.error('Connection Error');
+				return false;
+			}
+		});
+	};
+	self.isValidforAppSetting = function () {
+		var valid = validator.validateForm('#appSettingsForm');
+		return valid;
+	};
+	self.getAppSettings();
+}
+var customFunctionManageModel = function (options, keys) {
+	var self = this;
+	self.keys = keys;
+	var codeEditor;
+	var validator = new validation();
+	function updateCodeEditor(code) {
+		if (codeEditor) {
+			codeEditor.setValue(code)
+		}
+	}
+	self.updateCodeEditorMode = function (functionModel) {
+		var mode = functionModel.functionType() === "javascript" ? "javascript" : "text/x-csharp";
+		codeEditor.setOption("mode", mode);
+	};
+
+	self.functions = ko.observableArray([]);
+	self.search = ko.observable('');
+
+	_.forEach(options.model.Functions, function (x) {
+		self.functions.push(new customFunctionModel(x));
+	});
+
+	self.savedProcedures = ko.mapping.fromJS(options.model.Procedures, {
+		'ignore': ["TableName"]
+	});
+
+	self.filteredFunctions = ko.computed(function () {
+		var search = self.search().toLowerCase();
+		return ko.utils.arrayFilter(self.functions(), function (functionModel) {
+			return functionModel.name().toLowerCase().indexOf(search) >= 0;
+		});
+	});
+
+	self.selectedFunction = ko.observable();
+
+	self.selectFunction = function (functionModel) {
+		validator.clearForm('#custom-sql-modal');
+		self.selectedFunction(functionModel);
+		setTimeout(function () {
+			if (codeEditor) {
+				codeEditor.toTextArea();
+			}
+			// Create a new CodeMirror instance
+			codeEditor = CodeMirror.fromTextArea(document.getElementById("codeEditor"), {
+				lineNumbers: true,
+				mode: functionModel.functionType() === "javascript" ? "text/javascript" : "text/x-csharp",
+				theme: 'default', // Replace 'default' with the theme you've chosen
+				lint: {
+					esversion: 6, // Enable ES6 
+				},
+				gutters: ["CodeMirror-lint-markers"], // Add gutters for lint markers
+			});
+			codeEditor.setValue(functionModel.code());
+		}, 500);
+	};
+
+	self.createNewFunction = function () {
+		validator.clearForm('#custom-sql-modal');
+		var newFunction = new customFunctionModel();
+		var newFunctionCount = self.functions().length + 1;
+		newFunction.name("New Function " + newFunctionCount);
+		self.selectFunction(newFunction);
+	};
+
+	self.saveFunction = function () {
+		var valid = validator.validateForm('#functions');
+
+		if (!self.selectedFunction().name()) {
+			toastr.error("Function name is required");
+			valid = false;
+		}
+
+		var existingFunctionIndex = self.functions().findIndex(function (func) {
+			return func.name() === self.selectedFunction().name();
+		});
+
+		if (existingFunctionIndex !== -1 && self.functions()[existingFunctionIndex] !== self.selectedFunction()) {
+			toastr.error("Function name is already in use");
+			valid = false;
+		}
+		// Validate parameters
+		var parameterErrors = []; var i = 1;
+		self.selectedFunction().parameters().forEach(function (param) {
+			var errors = param.validate();
+			param.OrderBy = i++;
+			param.required(param.required() === false ? false : true);
+			if (errors.length > 0) {
+				parameterErrors = parameterErrors.concat(errors);
+			}
+		});
+
+		if (parameterErrors.length > 0) {
+			// Handle the parameter errors, e.g., display them using toastr
+			parameterErrors.forEach(function (error) {
+				toastr.error(error);
+			});
+			valid = false;
+		}
+
+		var currentCode = codeEditor.getValue();
+
+		if (self.selectedFunction().functionType() === 'javascript') {
+			// Validate JavaScript code using JSHint
+			var _valid = JSHINT(currentCode);
+			if (!_valid) {
+				var error = JSHINT.errors[0];
+				toastr.error("JavaScript Error: " + error.reason + " on line " + error.line);
+				valid = false;
+			}
+		}
+
+		if (!valid) {
+			return;
+		}
+
+		self.selectedFunction().code(currentCode);
+
+		var e = ko.mapping.toJS(self.selectedFunction(), {
+			'ignore': []
+		});
+
+		ajaxcall({
+			url: options.apiUrl,
+			type: 'POST',
+			data: JSON.stringify({
+				method: options.saveCustomFuncUrl,
+				model: JSON.stringify({
+					model: e,
+					account: self.keys.AccountApiKey,
+					dataConnect: self.keys.DatabaseApiKey
+				})
+			})
+		}).done(function (result) {
+			if (!result) {
+				toastr.error('Error saving Function: ' + result.Message);
+				return false;
+			}
+
+			self.selectedFunction().id(result);
+			if (existingFunctionIndex !== -1) {
+				// Update existing function
+				self.functions.splice(existingFunctionIndex, 1, self.selectedFunction());
+			} else {
+				// Add new function
+				self.functions.push(self.selectedFunction());
+			}
+
+			toastr.success('Function saved successfully');
+
+			self.buildCustomFunctions().done(function () {
+				
+			});
+		});
+	};
+
+	self.buildCustomFunctions = function () {
+		return ajaxcall({
+			url: options.buildDynamicFunctionsUrl,
+			type: 'POST'
+		}).done(function (result) {
+			if (!result) {
+				toastr.error('Error building Functions: ' + result.Message);
+				return false;
+			}
+
+			toastr.success('Functions built successfully');
+		});
+	}
+	self.deleteFunction = function (functionModel) {
+		bootbox.confirm("Are you sure you want to delete this function?", function (result) {
+			if (result) {
+				ajaxcall({
+					url: options.apiUrl,
+					type: 'POST',
+					data: JSON.stringify({
+						method: options.deleteCustomFuncUrl,
+						model: JSON.stringify({
+							account: self.keys.AccountApiKey,
+							dataConnect: self.keys.DatabaseApiKey,
+							funcId: functionModel.id()
+						})
+					})
+				}).done(function () {
+					toastr.success("Deleted Function " + functionModel.name());
+					self.functions.remove(functionModel);
+					if (self.selectedFunction() === functionModel) {
+						self.selectedFunction(null);
+					}
+
+					self.buildCustomFunctions();
+				});
+			}
+		});
+	}
+
+	self.cancelEdit = function () {
+		bootbox.confirm("Are you sure you want to cancel your changes?", function (result) {
+			if (result) {
+				self.selectedFunction(null);
+			}
+		});
+	};
+
+	ko.computed(function () {
+		var selectedFunction = ko.unwrap(self.selectedFunction);
+		if (selectedFunction) {
+			var code = selectedFunction.code();
+			if (code) updateCodeEditor(selectedFunction.code());
+		}
+	});
+};
+
+var customFunctionParameterModel = function (options, parentParameters) {
+	var self = this;
+	options = options || {};
+
+	self.parameterName = ko.observable(options.ParameterName || '');
+	self.displayName = ko.observable(options.DisplayName || '').extend({ required: true });
+	self.description = ko.observable(options.Description || '');
+	self.datatype = ko.observable(options.DataType || 'object');
+	self.required = ko.observable(options.Required);
+	self.isValid = ko.observable(true);
+	self.errorMessage = ko.observable();
+
+	self.validate = function () {
+		var errors = [];
+
+		// Required
+		if (!self.parameterName().trim()) {
+			errors.push("Argument name is required.");
+		}
+
+		// Format
+		if (!/^[A-Za-z][A-Za-z0-9_]*$/.test(self.parameterName())) {
+			errors.push("Argument name must start with a letter and can only contain alphanumeric characters and underscores.");
+		}
+
+		// Unique
+		var isUnique = parentParameters().every(function (param) {
+			return param === self || param.parameterName() !== self.parameterName();
+		});
+		if (!isUnique) {
+			errors.push("Argument name must be unique.");
+		}
+
+		self.isValid(errors.length === 0);
+		self.errorMessage(errors.join(','));
+		return errors;
+	};
+};
+
+var customFunctionModel = function (options) {
+	var self = this;
+	options = options || {};
+	self.id = ko.observable(options.Id || 0);
+	self.name = ko.observable(options.Name || '');
+	self.namespace = ko.observable(options.Namespace || '');
+	self.description = ko.observable(options.Description || '');
+	self.functionType = ko.observable(options.FunctionType || ''); // js or c#
+	self.resultDataType = ko.observable(options.ResultDataType || '');
+	self.code = ko.observable(options.Code || '');
+	self.parameters = ko.observableArray([]);
+
+	_.forEach(options.Parameters, function (x) {
+		self.parameters.push(new customFunctionParameterModel(x, self.parameters));
+	});
+
+	self.addParameter = function () {
+		var nextValueNumber = self.parameters().length + 1;
+		var defaultParameterName = "param_" + nextValueNumber;
+		self.parameters.push(new customFunctionParameterModel({
+			ParameterName: defaultParameterName,
+			DisplayName: "Parameter " + nextValueNumber
+		}, self.parameters));
+	};
+
+	self.removeParameter = function (parameter) {
+		bootbox.confirm("Are you sure you want to delete this parameter?", function (result) {
+			if (result) {
+				self.parameters.remove(parameter);
+			}
+		});
+	};
+
+}
